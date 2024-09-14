@@ -195,7 +195,7 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 
 	// The buffer size for reading from the TCP connection should be approximately the same as the data channel buffer size.
 	// In webrtc, a message can safely be up to 16KB, so we'll use a buffer size of 16KB for reading from the TCP connection.
-	bufferSize := 16 * 1024
+	bufferSize := 8 * 1024
 	buffer := make([]byte, bufferSize)
 	for {
 		n, err := conn.Read(buffer)

@@ -19,7 +19,7 @@ var dataChannelConfig = &webrtc.DataChannelInit{
 	// ensures that data messages are delivered in the order they were sent
 	Ordered: &[]bool{true}[0],
 	// ensures that data messages are delivered exactly once
-	MaxRetransmits: &[]uint16{0}[0],
+	// MaxRetransmits: &[]uint16{0}[0],
 }
 
 func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) {
@@ -186,7 +186,7 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 
 		// The buffer size for reading from the TCP connection should be approximately the same as the data channel buffer size.
 		// In webrtc, a message can safely be up to 16KB, so we'll use a buffer size of 16KB for reading from the TCP connection.
-		bufferSize := 16 * 1024
+		bufferSize := 8 * 1024
 		buffer := make([]byte, bufferSize)
 		for {
 			n, err := conn.Read(buffer)
@@ -232,6 +232,5 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 		}
 	}()
 
-	// Keep the connection open
 	select {}
 }
