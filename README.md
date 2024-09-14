@@ -1,2 +1,3 @@
-# whet
+# WHET
 WebRTC-HTTP Encapsulated Tunnel
+
