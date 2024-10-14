@@ -225,11 +225,12 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 		if err != nil {
 			if err != io.EOF {
 				fmt.Printf("Error reading from target connection: %v\n", err)
-			}
-			// Wait until the bufferedAmount becomes zero
-			// sleep for a short duration to avoid busy waiting
-			for dataChannel.BufferedAmount() > 0 {
-				time.Sleep(10 * time.Millisecond)
+			} else {
+				// Wait until the bufferedAmount becomes zero
+				// sleep for a short duration to avoid busy waiting
+				for dataChannel.BufferedAmount() > 0 {
+					time.Sleep(10 * time.Millisecond)
+				}
 			}
 			dataChannel.Close()
 			peer.Close()

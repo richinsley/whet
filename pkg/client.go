@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -212,6 +213,12 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 			if err != nil {
 				if err != io.EOF {
 					fmt.Printf("Error reading from TCP connection: %v\n", err)
+				} else {
+					// Wait until the bufferedAmount becomes zero
+					// sleep for a short duration to avoid busy waiting
+					for dataChannel.BufferedAmount() > 0 {
+						time.Sleep(10 * time.Millisecond)
+					}
 				}
 				// close the ice connection
 				c.peerConnection.Close()
