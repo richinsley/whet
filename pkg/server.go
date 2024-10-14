@@ -8,10 +8,11 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
 func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bearerToken string) {
@@ -56,6 +57,7 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 			dataChannel:    nil,
 			conn:           nil,
 			clientReady:    false,
+			sendMoreCh:     make(chan struct{}, 1),
 		}
 
 		var wg sync.WaitGroup
@@ -83,6 +85,7 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 				} else {
 					// Send SERVER_READY as soon as the channel opens
 					c.conn = conn
+					c.dataChannel = dataChannel
 					fmt.Println("Sending SERVER_READY message")
 					err := dataChannel.Send([]byte("SERVER_READY"))
 					if err != nil {
@@ -91,8 +94,23 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 					wg.Done()
 
 					go func() {
-						createServerSideConnection(peerConnection, dataChannel, &wg, conn)
+						createServerSideConnection(peerConnection, dataChannel, &wg, c)
 					}()
+				}
+			})
+
+			// Set bufferedAmountLowThreshold so that we can get notified when
+			// we can send more
+			dataChannel.SetBufferedAmountLowThreshold(bufferedAmountLowThreshold)
+
+			// This callback is made when the current bufferedAmount becomes lower than the threshold
+			dataChannel.OnBufferedAmountLow(func() {
+				fmt.Println("Buffered amount low, sending more")
+				// Make sure to not block this channel or perform long running operations in this callback
+				// This callback is executed by pion/sctp. If this callback is blocking it will stop operations
+				select {
+				case c.sendMoreCh <- struct{}{}:
+				default:
 				}
 			})
 
@@ -190,15 +208,16 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 	}
 }
 
-func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc.DataChannel, wg *sync.WaitGroup, conn net.Conn) {
+func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc.DataChannel, wg *sync.WaitGroup, c *Connection) {
 	wg.Wait()
 
 	// The buffer size for reading from the TCP connection should be approximately the same as the data channel buffer size.
 	// In webrtc, a message can safely be up to 16KB, so we'll use a buffer size of 16KB for reading from the TCP connection.
-	bufferSize := 8 * 1024
+	bufferSize := maxBufferSize
 	buffer := make([]byte, bufferSize)
 	for {
-		n, err := conn.Read(buffer)
+		// read in up to bufferSize bytes from our TCP connection
+		n, err := c.conn.Read(buffer)
 		if n == 0 {
 			fmt.Println("Connection closed by client")
 			err = io.EOF
@@ -207,14 +226,30 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 			if err != io.EOF {
 				fmt.Printf("Error reading from target connection: %v\n", err)
 			}
+			// Wait until the bufferedAmount becomes zero
+			// sleep for a short duration to avoid busy waiting
+			for dataChannel.BufferedAmount() > 0 {
+				time.Sleep(10 * time.Millisecond)
+			}
 			dataChannel.Close()
 			peer.Close()
 			return
 		}
+
+		// fmt.Printf("Read %d bytes from target\n", n)
+
+		// push the data to the data channel
 		err = dataChannel.Send(buffer[:n])
 		if err != nil {
 			fmt.Printf("Error sending data over WebRTC: %v\n", err)
 			return
+		}
+
+		// check if we can send more
+		if c.dataChannel.BufferedAmount() > maxBufferedAmount {
+			// Wait until the bufferedAmount becomes lower than the threshold
+			fmt.Println("Buffered amount too high, waiting")
+			<-c.sendMoreCh
 		}
 	}
 }

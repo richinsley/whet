@@ -4,7 +4,15 @@ import (
 	"net"
 	"sync"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
+)
+
+const (
+	bufferedAmountLowThreshold uint64 = 512 * 1024  // 512 KB
+	maxBufferedAmount          uint64 = 1024 * 1024 // 1 MB
+	// The buffer size for reading from the TCP connection should be approximately the same as the data channel buffer size.
+	// In webrtc, a message can safely be up to 16KB, so we'll use a buffer size of 16KB for reading from the TCP connection.
+	maxBufferSize int = 16 * 1024
 )
 
 var OpenConnections = make(map[string]*Connection)
@@ -16,6 +24,7 @@ type Connection struct {
 	conn           net.Conn
 	resourceURL    string
 	clientReady    bool
+	sendMoreCh     chan struct{} // rate control signal
 }
 
 func DefaultPeerConnectionConfig() webrtc.Configuration {

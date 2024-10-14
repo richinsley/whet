@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 )
 
 var dataChannelConfig = &webrtc.DataChannelInit{
@@ -39,6 +39,10 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 		return
 	}
 
+	// out channel object
+	c := &Connection{}
+	c.sendMoreCh = make(chan struct{}, 1)
+
 	// wait for both the data channel to open and the server handshake to complete
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -46,6 +50,21 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 	dataChannel.OnOpen(func() {
 		fmt.Println("Data channel opened")
 		wg.Done()
+	})
+
+	// Set bufferedAmountLowThreshold so that we can get notified when
+	// we can send more
+	dataChannel.SetBufferedAmountLowThreshold(bufferedAmountLowThreshold)
+
+	// This callback is made when the current bufferedAmount becomes lower than the threshold
+	dataChannel.OnBufferedAmountLow(func() {
+		fmt.Println("Buffered amount low, sending more")
+		// Make sure to not block this channel or perform long running operations in this callback
+		// This callback is executed by pion/sctp. If this callback is blocking it will stop operations
+		select {
+		case c.sendMoreCh <- struct{}{}:
+		default:
+		}
 	})
 
 	offer, err := peerConnection.CreateOffer(nil)
@@ -142,13 +161,11 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 	}
 
 	// store the connection in the map
-	c := &Connection{
-		peerConnection: peerConnection,
-		dataChannel:    dataChannel,
-		conn:           conn,
-		resourceURL:    base.ResolveReference(resourceUrl).String(),
-		clientReady:    false,
-	}
+	c.peerConnection = peerConnection
+	c.dataChannel = dataChannel
+	c.conn = conn
+	c.resourceURL = base.ResolveReference(resourceUrl).String()
+	c.clientReady = false
 
 	// Client side WebRTC to TCP proxy (input from WebRTC, output to local TCP)
 	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
@@ -184,9 +201,7 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 		// Wait for data channel to open and the handshake to complete before sending data
 		wg.Wait()
 
-		// The buffer size for reading from the TCP connection should be approximately the same as the data channel buffer size.
-		// In webrtc, a message can safely be up to 16KB, so we'll use a buffer size of 16KB for reading from the TCP connection.
-		bufferSize := 8 * 1024
+		bufferSize := maxBufferSize
 		buffer := make([]byte, bufferSize)
 		for {
 			n, err := conn.Read(buffer)
@@ -228,6 +243,13 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 			if err != nil {
 				fmt.Printf("Error sending data: %v\n", err)
 				return
+			}
+
+			// check if we can send more
+			if dataChannel.BufferedAmount() > maxBufferedAmount {
+				// Wait until the bufferedAmount becomes lower than the threshold
+				fmt.Println("Buffered amount too high, waiting")
+				<-c.sendMoreCh
 			}
 		}
 	}()
