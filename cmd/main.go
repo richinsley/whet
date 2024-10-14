@@ -24,18 +24,20 @@ func main() {
 	listenAddr := flag.String("listen", "localhost:8081", "Address to listen on for incoming TCP connections")
 	targetAddr := flag.String("target", "localhost:22", "Target address for server-side TCP connections")
 	btoken := flag.String("token", "", "Bearer token for authorization")
+	detached := flag.Bool("detached", false, "Run in detached mode")
+
 	if *btoken != "" {
 		bearerToken = *btoken
 	}
 
 	flag.Parse()
-	
+
 	if *isServer {
 		if *isNGROK {
 			ctx := context.Background()
-			runServerNGROK(ctx, *targetAddr)
+			runServerNGROK(ctx, *targetAddr, *detached)
 		} else {
-			runServer(*serverAddr, *targetAddr)
+			runServer(*serverAddr, *targetAddr, *detached)
 		}
 	} else {
 		runClient(*serverAddr, *listenAddr)
@@ -62,7 +64,7 @@ func runClient(serverAddr, listenAddr string) {
 	}
 }
 
-func runServerNGROK(ctx context.Context, targetAddr string) {
+func runServerNGROK(ctx context.Context, targetAddr string, detached bool) {
 	// get ngrok AUTH_TOKEN from env NGROK_AUTHTOKEN
 	token := os.Getenv("NGROK_AUTHTOKEN")
 	listener, err := ngrok.Listen(ctx,
@@ -77,14 +79,14 @@ func runServerNGROK(ctx context.Context, targetAddr string) {
 
 	log.Println("App URL", listener.URL())
 	http.HandleFunc("/whep/", func(w http.ResponseWriter, r *http.Request) {
-		pkg.WhepHandler(w, r, targetAddr, bearerToken)
+		pkg.WhepHandler(w, r, targetAddr, bearerToken, detached)
 	})
 	panic(http.Serve(listener, nil))
 }
 
-func runServer(serverAddr, targetAddr string) {
+func runServer(serverAddr, targetAddr string, detached bool) {
 	http.HandleFunc("/whep/", func(w http.ResponseWriter, r *http.Request) {
-		pkg.WhepHandler(w, r, targetAddr, bearerToken)
+		pkg.WhepHandler(w, r, targetAddr, bearerToken, detached)
 	})
 	fmt.Printf("WHEP signaling server running on http://%s\n", serverAddr)
 	panic(http.ListenAndServe(serverAddr, nil))

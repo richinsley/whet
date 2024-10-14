@@ -15,7 +15,7 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bearerToken string) {
+func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bearerToken string, detached bool) {
 	// Extract the path suffix after "/whep/"
 	whepPath := "/whep/"
 	pathSuffix := strings.TrimPrefix(r.URL.Path, whepPath)
@@ -41,11 +41,20 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 			return
 		}
 
+		// Create a SettingEngine and enable Detach
+		s := webrtc.SettingEngine{}
+		if detached {
+			s.DetachDataChannels()
+		}
+
+		// Create an API object with the engine
+		api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
+
 		// get the defaul peer connection config
 		defaultPeerConnectionConfig := DefaultPeerConnectionConfig()
 
 		// create a new peer connection
-		peerConnection, err := webrtc.NewPeerConnection(defaultPeerConnectionConfig)
+		peerConnection, err := api.NewPeerConnection(defaultPeerConnectionConfig)
 		if err != nil {
 			http.Error(w, "Failed to create peer connection", http.StatusInternalServerError)
 			return
@@ -58,6 +67,7 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 			conn:           nil,
 			clientReady:    false,
 			sendMoreCh:     make(chan struct{}, 1),
+			detached:       detached,
 		}
 
 		var wg sync.WaitGroup
@@ -71,11 +81,60 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 
 			// handle the data channel opening
 			dataChannel.OnOpen(func() {
+				// detach the channel if we're in detached mode
+				if detached {
+					raw, dErr := dataChannel.Detach()
+					if dErr != nil {
+						panic(dErr)
+					}
+					c.rawDetached = raw
+
+					go func() {
+						// The first message from the client must be the "CLIENT_READY" message
+						readymsg := make([]byte, 12)
+						n, err := c.rawDetached.Read(readymsg)
+						if err != nil {
+							fmt.Printf("Error reading from rawDetached: %v\n", err)
+							c.conn.Close()
+							return
+						}
+						if n != 12 || !bytes.Equal(readymsg, []byte("CLIENT_READY")) {
+							fmt.Println("Handshake failed, closing connection")
+							c.conn.Close()
+							return
+						}
+
+						c.clientReady = true
+						wg.Done()
+
+						defer c.conn.Close()
+						buffer := make([]byte, maxBufferSize)
+						for {
+							n, err := c.ReceiveRaw(buffer)
+							if n == 0 || err != nil {
+								fmt.Println("Connection closed by client")
+								break
+							}
+
+							// write all the data to the TCP connection
+							err = c.SendTCP(buffer[:n])
+							if err != nil {
+								fmt.Printf("Error writing to target connection: %v\n", err)
+								break
+							}
+						}
+					}()
+				}
+
 				fmt.Println("Data channel opened")
 				// try to open the TCP connection to our target
 				conn, err := net.Dial("tcp", targetAddr)
 				if err != nil {
-					dataChannel.Send([]byte("SERVER_ERROR"))
+					if c.rawDetached != nil {
+						c.rawDetached.Write([]byte("SERVER_ERROR"))
+					} else {
+						dataChannel.Send([]byte("SERVER_ERROR"))
+					}
 					fmt.Printf("Error connecting to target: %v\n", err)
 
 					// clean up the connection
@@ -87,9 +146,16 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 					c.conn = conn
 					c.dataChannel = dataChannel
 					fmt.Println("Sending SERVER_READY message")
-					err := dataChannel.Send([]byte("SERVER_READY"))
-					if err != nil {
-						fmt.Printf("Error sending SERVER_READY: %v\n", err)
+					if c.rawDetached != nil {
+						_, err := c.rawDetached.Write([]byte("SERVER_READY"))
+						if err != nil {
+							fmt.Printf("Error sending SERVER_READY: %v\n", err)
+						}
+					} else {
+						err := dataChannel.Send([]byte("SERVER_READY"))
+						if err != nil {
+							fmt.Printf("Error sending SERVER_READY: %v\n", err)
+						}
 					}
 					wg.Done()
 
@@ -114,29 +180,31 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 				}
 			})
 
-			// handle the data channel messages
-			// Server side WebRTC to TCP proxy (input from WebRTC, output to local TCP)
-			dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-				if !c.clientReady {
-					// The first message from the client must be the "CLIENT_READY" message
-					if bytes.Equal(msg.Data, []byte("CLIENT_READY")) {
-						fmt.Println("received CLIENT_READY message")
-						c.clientReady = true
-						wg.Done()
-						return
-					} else {
-						// handshake failed, close the connection
-						fmt.Println("Handshake failed, closing connection")
-						c.conn.Close()
-						return
+			if !detached {
+				// handle the data channel messages
+				// Server side WebRTC to TCP proxy (input from WebRTC, output to local TCP)
+				dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
+					if !c.clientReady {
+						// The first message from the client must be the "CLIENT_READY" message
+						if bytes.Equal(msg.Data, []byte("CLIENT_READY")) {
+							fmt.Println("received CLIENT_READY message")
+							c.clientReady = true
+							wg.Done()
+							return
+						} else {
+							// handshake failed, close the connection
+							fmt.Println("Handshake failed, closing connection")
+							c.conn.Close()
+							return
+						}
 					}
-				}
 
-				_, err := c.conn.Write(msg.Data)
-				if err != nil {
-					fmt.Printf("Error writing to target connection: %v\n", err)
-				}
-			})
+					_, err := c.conn.Write(msg.Data)
+					if err != nil {
+						fmt.Printf("Error writing to target connection: %v\n", err)
+					}
+				})
+			}
 		})
 
 		// set the remote description
@@ -240,7 +308,12 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 		// fmt.Printf("Read %d bytes from target\n", n)
 
 		// push the data to the data channel
-		err = dataChannel.Send(buffer[:n])
+		if c.rawDetached != nil {
+			err = c.SendRaw(buffer[:n])
+		} else {
+			err = dataChannel.Send(buffer[:n])
+		}
+
 		if err != nil {
 			fmt.Printf("Error sending data over WebRTC: %v\n", err)
 			return
