@@ -23,16 +23,26 @@ var dataChannelConfig = &webrtc.DataChannelInit{
 	// MaxRetransmits: &[]uint16{0}[0],
 }
 
-func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) {
+func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, detached bool) {
 	defer conn.Close()
 
+	// Create a SettingEngine and enable Detach
+	s := webrtc.SettingEngine{}
+	if detached {
+		s.DetachDataChannels()
+	}
+
+	// Create an API object with the engine
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
+
 	peerConnectionConfig := DefaultPeerConnectionConfig()
-	peerConnection, err := webrtc.NewPeerConnection(peerConnectionConfig)
+	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
 	if err != nil {
 		fmt.Printf("Failed to create peer connection: %v\n", err)
 		return
 	}
 	defer peerConnection.Close()
+	done := make(chan struct{})
 
 	dataChannel, err := peerConnection.CreateDataChannel("data", dataChannelConfig)
 	if err != nil {
@@ -43,14 +53,62 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 	// out channel object
 	c := &Connection{}
 	c.sendMoreCh = make(chan struct{}, 1)
+	c.detached = detached
 
 	// wait for both the data channel to open and the server handshake to complete
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	dataChannel.OnOpen(func() {
+		if detached {
+			rawDetached, err := dataChannel.Detach()
+			if err != nil {
+				fmt.Printf("Failed to detach data channel: %v\n", err)
+				return
+			}
+			c.rawDetached = rawDetached
+		}
+
 		fmt.Println("Data channel opened")
 		wg.Done()
+
+		go func() {
+			readybuf := make([]byte, 12)
+			_, err := c.ReceiveRaw(readybuf)
+			if err != nil {
+				fmt.Printf("Error receiving ready message: %v\n", err)
+				return
+			}
+
+			// The first message must be the "SERVER_READY" message
+			if bytes.Equal(readybuf, []byte("SERVER_READY")) {
+				fmt.Println("Received SERVER_READY, sending CLIENT_READY")
+				c.SendRaw([]byte("CLIENT_READY"))
+				c.clientReady = true
+				wg.Done()
+			} else {
+				// handshake failed, close the connection
+				fmt.Println("Handshake failed, closing connection")
+				conn.Close()
+				return
+			}
+
+			bufferSize := maxBufferSize
+			buffer := make([]byte, bufferSize)
+			for {
+				n, err := c.ReceiveRaw(buffer)
+				if n == 0 || err != nil {
+					fmt.Println("Connection closed by client")
+					break
+				}
+
+				_, err = conn.Write(buffer[:n])
+				if err != nil {
+					fmt.Printf("Error writing to TCP connection: %v\n", err)
+					break
+				}
+			}
+		}()
 	})
 
 	// Set bufferedAmountLowThreshold so that we can get notified when
@@ -59,7 +117,7 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 
 	// This callback is made when the current bufferedAmount becomes lower than the threshold
 	dataChannel.OnBufferedAmountLow(func() {
-		fmt.Println("Buffered amount low, sending more")
+		// fmt.Println("Buffered amount low, sending more")
 		// Make sure to not block this channel or perform long running operations in this callback
 		// This callback is executed by pion/sctp. If this callback is blocking it will stop operations
 		select {
@@ -169,28 +227,31 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 	c.clientReady = false
 
 	// Client side WebRTC to TCP proxy (input from WebRTC, output to local TCP)
-	dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-		if !c.clientReady {
-			// The first message must be the "SERVER_READY" message
-			if bytes.Equal(msg.Data, []byte("SERVER_READY")) {
-				fmt.Println("Received SERVER_READY, sending CLIENT_READY")
-				dataChannel.Send([]byte("CLIENT_READY"))
-				c.clientReady = true
-				wg.Done()
-				return
-			} else {
-				// handshake failed, close the connection
-				fmt.Println("Handshake failed, closing connection")
-				conn.Close()
-				return
+	if !detached {
+		dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
+			if !c.clientReady {
+				// The first message must be the "SERVER_READY" message
+				if bytes.Equal(msg.Data, []byte("SERVER_READY")) {
+					fmt.Println("Received SERVER_READY, sending CLIENT_READY")
+					dataChannel.Send([]byte("CLIENT_READY"))
+					c.clientReady = true
+					wg.Done()
+					done <- struct{}{}
+					return
+				} else {
+					// handshake failed, close the connection
+					fmt.Println("Handshake failed, closing connection")
+					conn.Close()
+					done <- struct{}{}
+					return
+				}
 			}
-		}
-		_, err := conn.Write(msg.Data)
-		if err != nil {
-			fmt.Printf("Error writing to TCP connection: %v\n", err)
-		}
-	})
-
+			_, err := conn.Write(msg.Data)
+			if err != nil {
+				fmt.Printf("Error writing to TCP connection: %v\n", err)
+			}
+		})
+	}
 	connectionsLock.Lock()
 	OpenConnections[connectionID] = c
 	connectionsLock.Unlock()
@@ -220,6 +281,7 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 						time.Sleep(10 * time.Millisecond)
 					}
 				}
+
 				// close the ice connection
 				c.peerConnection.Close()
 				// call the "DELETE" on the host ResourceUrl if one was provided
@@ -244,22 +306,34 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string) 
 						fmt.Printf("Failed http DELETE request: %s\n", err)
 					}
 				}
+				done <- struct{}{}
 				return
 			}
-			err = dataChannel.Send(buffer[:n])
-			if err != nil {
-				fmt.Printf("Error sending data: %v\n", err)
-				return
+			if !c.detached {
+				err = dataChannel.Send(buffer[:n])
+				if err != nil {
+					fmt.Printf("Error sending data: %v\n", err)
+					done <- struct{}{}
+					return
+				}
+			} else {
+				err = c.SendRaw(buffer[:n])
+				if err != nil {
+					fmt.Printf("Error sending raw data: %v\n", err)
+					done <- struct{}{}
+					return
+				}
 			}
 
 			// check if we can send more
 			if dataChannel.BufferedAmount() > maxBufferedAmount {
 				// Wait until the bufferedAmount becomes lower than the threshold
-				fmt.Println("Buffered amount too high, waiting")
+				// fmt.Println("Buffered amount too high, waiting")
 				<-c.sendMoreCh
 			}
 		}
 	}()
 
-	select {}
+	<-done
+	fmt.Println("Connection closed")
 }

@@ -40,11 +40,11 @@ func main() {
 			runServer(*serverAddr, *targetAddr, *detached)
 		}
 	} else {
-		runClient(*serverAddr, *listenAddr)
+		runClient(*serverAddr, *listenAddr, *detached)
 	}
 }
 
-func runClient(serverAddr, listenAddr string) {
+func runClient(serverAddr, listenAddr string, detached bool) {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		panic(err)
@@ -60,7 +60,7 @@ func runClient(serverAddr, listenAddr string) {
 			continue
 		}
 
-		go pkg.HandleClientConnection(conn, serverAddr, bearerToken)
+		go pkg.HandleClientConnection(conn, serverAddr, bearerToken, detached)
 	}
 }
 
