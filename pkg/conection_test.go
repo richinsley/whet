@@ -69,7 +69,7 @@ func simpleMirrorServer(address string, t *testing.T) {
 	fmt.Println("Simple server sent data back to client")
 }
 
-// TestServerClient create a server that port forwards 9999 and listen for whep handler on 8088
+// TestServerClient create a server that port forwards 9999 and listen for whet handler on 8088
 // create a client that establishes a port forward to 10000
 func TestServerClient(t *testing.T) {
 	// name := "Gladys"
@@ -79,7 +79,7 @@ func TestServerClient(t *testing.T) {
 	//     t.Fatalf(`Hello("Gladys") = %q, %v, want match for %#q, nil`, msg, err, want)
 	// }
 
-	whepHandlerAddr := "127.0.0.1:8088"
+	whetHandlerAddr := "127.0.0.1:8088"
 	serverTargetAddr := "127.0.0.1:9999"
 	clientTargetAddr := "127.0.0.1:10000"
 	bufferSize := 1024 * 1024
@@ -90,12 +90,21 @@ func TestServerClient(t *testing.T) {
 		simpleMirrorServer(serverTargetAddr, t)
 	}()
 
-	// create the whep handler
+	targets := map[string]*ForwardTargetPort{
+		"remoterange": {
+			TargetName: "remoterange",
+			Host:       "127.0.0.1",
+			StartPort:  9999,
+			PortCount:  0,
+		},
+	}
+
+	// create the whet handler
 	go func() {
-		http.HandleFunc("/whep/", func(w http.ResponseWriter, r *http.Request) {
-			WhepHandler(w, r, serverTargetAddr, bearerToken)
+		http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
+			WhetHandler(w, r, targets, bearerToken, true)
 		})
-		fmt.Printf("WHEP signaling server running on http://%s\n", whepHandlerAddr)
+		fmt.Printf("WHET signaling server running on http://%s\n", whetHandlerAddr)
 		http.ListenAndServe("127.0.0.1:8088", nil)
 	}()
 
@@ -115,7 +124,7 @@ func TestServerClient(t *testing.T) {
 				continue
 			}
 
-			go HandleClientConnection(conn, whepHandlerAddr, bearerToken)
+			go HandleClientConnection(conn, whetHandlerAddr, bearerToken, true)
 		}
 	}()
 

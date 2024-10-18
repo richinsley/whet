@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,19 +16,55 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bearerToken string, detached bool) {
-	// Extract the path suffix after "/whep/"
-	whepPath := "/whep/"
-	pathSuffix := strings.TrimPrefix(r.URL.Path, whepPath)
-
+func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*ForwardTargetPort, bearerToken string, detached bool) {
+	// Extract the path suffix after "/whet/"
+	whetPath := "/whet/"
+	pathSuffix := strings.TrimPrefix(r.URL.Path, whetPath)
+	var err error
 	if r.Method == "POST" {
-		// Check bearer token if set
+		// Check bearer token if set before checking the target to prevent probing
 		if bearerToken != "" {
 			if r.Header.Get("Authorization") != fmt.Sprintf("Bearer %s", bearerToken) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 		}
+
+		// Check if the target exists in the targets map
+		// the target may have a hyphen to deliniate the target port in a range
+		portoffset := 0
+
+		// try to split the pathSuffix by a hyphen, if there are more than 2 parts, it's not a valid target
+		// if there are 2 parts, the second part should be a number
+		// if there is only 1 part, it should be a valid target and the portoffset should be 0
+		parts := strings.Split(pathSuffix, "-")
+		if len(parts) == 2 {
+			// try to parse the second part as an integer
+			portoffset, err = strconv.Atoi(parts[1])
+			if err != nil {
+				http.Error(w, "Invalid target", http.StatusBadRequest)
+				return
+			}
+		} else if len(parts) > 2 {
+			http.Error(w, "Invalid target", http.StatusBadRequest)
+			return
+		}
+
+		// check if the target exists in the map and get the target address
+		target, ok := targets[parts[0]]
+		if !ok {
+			http.Error(w, "Invalid target", http.StatusBadRequest)
+			return
+		}
+
+		// check if the portoffset is within the range
+		if portoffset < 0 || (portoffset != 0 && portoffset >= target.PortCount) {
+			http.Error(w, "Invalid target", http.StatusBadRequest)
+			return
+		}
+
+		// create the target address from the target name and the port offset
+		targetAddr := fmt.Sprintf("%s:%d", target.Host, target.StartPort+portoffset)
 
 		originProto := "http://"
 		if strings.HasPrefix(r.Proto, "HTTPS") {
@@ -244,7 +281,7 @@ func WhepHandler(w http.ResponseWriter, r *http.Request, targetAddr string, bear
 
 		// Before writing the response, set the Location header
 		// This is REQUIRED for the http DELETE handler to be called on teardown
-		location := originProto + r.Host + whepPath + distroUUID.String()
+		location := originProto + r.Host + whetPath + distroUUID.String()
 		w.Header().Set("Location", location)
 		w.Header().Set("Connection-ID", distroUUID.String())
 

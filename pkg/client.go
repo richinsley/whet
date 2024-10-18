@@ -147,12 +147,12 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, 
 	fmt.Println(offerString)
 
 	if strings.HasPrefix(endpoint, "http") {
-		endpoint = fmt.Sprintf("%s/whep/tunnel", endpoint)
+		endpoint = fmt.Sprintf("%s/whet/tunnel", endpoint)
 	} else {
-		endpoint = fmt.Sprintf("http://%s/whep/tunnel", endpoint)
+		endpoint = fmt.Sprintf("http://%s/whet/tunnel", endpoint)
 	}
 
-	// post the request to the whep server
+	// post the request to the whet server
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
@@ -161,7 +161,7 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, 
 		},
 	}
 
-	fmt.Printf("WHEP client using endpoint%s\n", endpoint)
+	fmt.Printf("WHET client using endpoint%s\n", endpoint)
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer([]byte(offerString)))
 	if err != nil {
 		return

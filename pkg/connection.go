@@ -45,7 +45,7 @@ func DefaultPeerConnectionConfig() webrtc.Configuration {
 	}
 }
 
-// Send sends data over the data channel until all data has been sent.
+// SendRaw sends data over the data channel and blocks until all data has been sent.
 func (c *Connection) SendRaw(data []byte) error {
 	if !c.detached {
 		return errors.New("cannot send raw data on non-detached connection")
@@ -74,7 +74,7 @@ func (c *Connection) SendTCP(data []byte) error {
 	return nil
 }
 
-// Receive reads data from the data channel, returning the number of bytes read and any error that occurred.
+// ReceiveRaw reads data from the data channel, returning the number of bytes read or any error that occurred.
 func (c *Connection) ReceiveRaw(data []byte) (int, error) {
 	if !c.detached {
 		return 0, errors.New("cannot receive raw data on non-detached connection")
