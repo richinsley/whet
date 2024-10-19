@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/richinsley/whet/pkg"
 	"golang.ngrok.com/ngrok"
@@ -34,12 +35,14 @@ func (t *targetAddrList) String() string {
 func main() {
 	// -serve -server=localhost:9999 -target=localhost:22
 	isServer := flag.Bool("serve", false, "Run in server mode")
-	isNGROK := flag.Bool("ngrok", false, "Run in ngrok mode")
+	isNGROK := flag.Bool("ngrok", false, "Run in ngrok server mode")
 	serverAddr := flag.String("server", "localhost:8080", "Server address for signaling")
-	listenAddr := flag.String("listen", "localhost:8081", "Address to listen on for incoming TCP connections")
-	// targetAddr := flag.String("tcptarget", "localhost:22", "Target address for server-side TCP connections")
+	// listenAddr := flag.String("listen", "localhost:8081", "Address to listen on for incoming TCP connections")
 	btoken := flag.String("token", "", "Bearer token for authorization")
 	detached := flag.Bool("detached", false, "Run in detached mode")
+
+	var tcplisteners targetAddrList
+	flag.Var(&tcplisteners, "tcplisten", "Address to listen on for incoming TCP connections(can specify multiple)")
 
 	var tcptargets targetAddrList
 	flag.Var(&tcptargets, "tcptarget", "Target address for server-side TCP connections (can specify multiple)")
@@ -67,28 +70,56 @@ func main() {
 			runServer(*serverAddr, targets, *detached)
 		}
 	} else {
-		runClient(*serverAddr, *listenAddr, *detached)
+		// parse the listener addresses
+		if len(tcplisteners) == 0 {
+			log.Fatal("No listener addresses specified")
+		}
+		listeners, err := pkg.ParseListenTargetPortsFromStringSlice(tcplisteners)
+		if err != nil {
+			log.Fatalf("Failed to parse forward target addresses: %v", err)
+		}
+		runClient(*serverAddr, listeners, *detached)
 	}
 }
 
-func runClient(serverAddr, listenAddr string, detached bool) {
-	listener, err := net.Listen("tcp", listenAddr)
-	if err != nil {
-		panic(err)
+func runClient(whetServerAddr string, listeners map[string]*pkg.ListenTargetPort, detached bool) {
+
+	// we'll use a channel to wait for all listeners to initialize
+	var wg sync.WaitGroup
+	wg.Add(len(listeners))
+	for _, listener := range listeners {
+		// start a goroutine for each listener
+		go func() {
+			localaddr := fmt.Sprintf("%s:%d", listener.LocalHost, listener.LocalPort)
+			lsocket, err := net.Listen("tcp", localaddr)
+			if err != nil {
+				panic(err)
+			}
+			defer lsocket.Close()
+
+			fmt.Printf("Listening for TCP connections on %s\n", localaddr)
+			// signal the wait group that we're ready
+			wg.Done()
+
+			// continue accepting connections until the program is terminated
+			for {
+				conn, err := lsocket.Accept()
+				if err != nil {
+					fmt.Printf("Error accepting connection: %v\n", err)
+					continue
+				}
+
+				go pkg.HandleClientConnection(conn, whetServerAddr, listener.TargetName, bearerToken, detached)
+			}
+		}()
 	}
-	defer listener.Close()
 
-	fmt.Printf("Listening for TCP connections on %s\n", listenAddr)
+	// wait for all listeners to initialize
+	wg.Wait()
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Printf("Error accepting connection: %v\n", err)
-			continue
-		}
+	fmt.Println("WHET client running")
 
-		go pkg.HandleClientConnection(conn, serverAddr, bearerToken, detached)
-	}
+	select {}
 }
 
 func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPort, detached bool) {

@@ -23,7 +23,7 @@ var dataChannelConfig = &webrtc.DataChannelInit{
 	// MaxRetransmits: &[]uint16{0}[0],
 }
 
-func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, detached bool) {
+func HandleClientConnection(conn net.Conn, signalServer string, targetName string, bearerToken string, detached bool) {
 	defer conn.Close()
 
 	// Create a SettingEngine and enable Detach
@@ -146,10 +146,10 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, 
 
 	fmt.Println(offerString)
 
-	if strings.HasPrefix(endpoint, "http") {
-		endpoint = fmt.Sprintf("%s/whet/tunnel", endpoint)
+	if strings.HasPrefix(signalServer, "http") {
+		signalServer = fmt.Sprintf("%s/whet/%s", signalServer, targetName)
 	} else {
-		endpoint = fmt.Sprintf("http://%s/whet/tunnel", endpoint)
+		signalServer = fmt.Sprintf("http://%s/whet/%s", signalServer, targetName)
 	}
 
 	// post the request to the whet server
@@ -161,8 +161,8 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, 
 		},
 	}
 
-	fmt.Printf("WHET client using endpoint%s\n", endpoint)
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer([]byte(offerString)))
+	fmt.Printf("WHET client using endpoint%s\n", signalServer)
+	req, err := http.NewRequest("POST", signalServer, bytes.NewBuffer([]byte(offerString)))
 	if err != nil {
 		return
 	}
@@ -195,7 +195,7 @@ func HandleClientConnection(conn net.Conn, endpoint string, bearerToken string, 
 		return
 		// return nil, nil, err
 	}
-	base, err := url.Parse(endpoint)
+	base, err := url.Parse(signalServer)
 	if err != nil {
 		return
 		// return nil, nil, err
