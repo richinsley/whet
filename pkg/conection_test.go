@@ -85,14 +85,16 @@ func TestServerClient(t *testing.T) {
 	bufferSize := 1024 * 1024
 	bearerToken := ""
 
-	// create our simple server.
+	// create our simple mirror server.
 	go func() {
 		simpleMirrorServer(serverTargetAddr, t)
 	}()
 
+	// create the forward targets
+	targetID := "remoterange"
 	targets := map[string]*ForwardTargetPort{
 		"remoterange": {
-			TargetName: "remoterange",
+			TargetName: targetID,
 			Host:       "127.0.0.1",
 			StartPort:  9999,
 			PortCount:  0,
@@ -124,7 +126,7 @@ func TestServerClient(t *testing.T) {
 				continue
 			}
 
-			go HandleClientConnection(conn, whetHandlerAddr, bearerToken, true)
+			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
 		}
 	}()
 
