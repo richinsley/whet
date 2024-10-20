@@ -19,6 +19,7 @@ type WebRTCConn struct {
 	closed        bool
 	readBuffer    []byte
 	bufferSize    int
+	bufferPos     int
 	maxBufferSize int
 }
 
@@ -36,6 +37,7 @@ func DialWebRTCConn(signalServer string, targetName string, bearerToken string) 
 		closed:        false,
 		readBuffer:    make([]byte, maxBufferSize),
 		bufferSize:    0,
+		bufferPos:     0,
 		maxBufferSize: maxBufferSize,
 	}, nil
 }
@@ -45,35 +47,22 @@ func (c *WebRTCConn) Read(b []byte) (n int, err error) {
 	// prevent the dreaded 'short buffer' error
 
 	// Refill the buffer if it's empty
-	if c.bufferSize == 0 {
+	if c.bufferSize == 0 || c.bufferPos == c.bufferSize {
 		c.bufferSize, err = c.connection.ReceiveRaw(c.readBuffer)
 		if err != nil {
 			return 0, err
 		}
+
+		if c.bufferSize == 0 {
+			return 0, io.EOF
+		}
+
+		c.bufferPos = 0
 	}
 
 	// Copy data from the read buffer to b
-	var copied int
-	if c.bufferSize != 0 {
-		copied = copy(b, c.readBuffer[:c.bufferSize])
-	} else {
-		copied = 0
-	}
-
-	// Update the read buffer
-	copy(c.readBuffer, c.readBuffer[copied:])
-	c.bufferSize -= copied
-
-	// If we need more data, try to fill the remaining space in b
-	if copied < len(b) {
-		remainingBuffer := b[copied:]
-		additionalBytes, err := c.connection.ReceiveRaw(remainingBuffer)
-		if err != nil && err != io.EOF {
-			return copied, err
-		}
-		copied += additionalBytes
-	}
-
+	copied := copy(b, c.readBuffer[c.bufferPos:c.bufferSize])
+	c.bufferPos += copied
 	return copied, nil
 }
 
