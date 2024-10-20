@@ -72,13 +72,6 @@ func simpleMirrorServer(address string, t *testing.T) {
 // TestServerClient create a server that port forwards 9999 and listen for whet handler on 8088
 // create a client that establishes a port forward to 10000
 func TestServerClient(t *testing.T) {
-	// name := "Gladys"
-	// want := regexp.MustCompile(`\b`+name+`\b`)
-	// msg, err := Hello("Gladys")
-	// if !want.MatchString(msg) || err != nil {
-	//     t.Fatalf(`Hello("Gladys") = %q, %v, want match for %#q, nil`, msg, err, want)
-	// }
-
 	whetHandlerAddr := "127.0.0.1:8088"
 	serverTargetAddr := "127.0.0.1:9999"
 	clientTargetAddr := "127.0.0.1:10000"
@@ -104,7 +97,7 @@ func TestServerClient(t *testing.T) {
 	// create the whet handler
 	go func() {
 		http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
-			WhetHandler(w, r, targets, bearerToken, true)
+			WhetHandler(w, r, targets, bearerToken, false)
 		})
 		fmt.Printf("WHET signaling server running on http://%s\n", whetHandlerAddr)
 		http.ListenAndServe("127.0.0.1:8088", nil)
@@ -199,6 +192,119 @@ func TestServerClient(t *testing.T) {
 			t.Fatalf("Buffers do not match at index %d", i)
 		}
 	}
+
+	t.Log("Buffers match")
+}
+
+// TestServerClientConn create a server that port forwards 9999 and listen for whet handler on 8088
+// create a client that establishes a port forward to 10000
+func TestServerClientConn(t *testing.T) {
+	whetHandlerAddr := "127.0.0.1:8088"
+	serverTargetAddr := "127.0.0.1:9999"
+	bufferSize := 1024 * 1024
+	bearerToken := ""
+
+	// create our simple mirror server.
+	go func() {
+		simpleMirrorServer(serverTargetAddr, t)
+	}()
+
+	// create the forward targets
+	targetID := "remoterange"
+	targets := map[string]*ForwardTargetPort{
+		"remoterange": {
+			TargetName: targetID,
+			Host:       "127.0.0.1",
+			StartPort:  9999,
+			PortCount:  0,
+		},
+	}
+
+	// create the whet handler
+	go func() {
+		http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
+			WhetHandler(w, r, targets, bearerToken, true)
+		})
+		fmt.Printf("WHET signaling server running on http://%s\n", whetHandlerAddr)
+		http.ListenAndServe(whetHandlerAddr, nil)
+	}()
+
+	conn, err := DialWebRTCConn(whetHandlerAddr, targetID, bearerToken)
+	if err != nil {
+		t.Fatalf("Error connecting to client target: %v", err)
+	}
+
+	// create a very large buffer and fill it with random data
+	buffer := make([]byte, bufferSize)
+	for i := range buffer {
+		buffer[i] = byte(rand.Uint32())
+	}
+
+	// write the length of the buffer to the connection
+	lengthBuffer := make([]byte, 4)
+	lengthBuffer[0] = byte(bufferSize & 0xFF)
+	lengthBuffer[1] = byte((bufferSize >> 8) & 0xFF)
+	lengthBuffer[2] = byte((bufferSize >> 16) & 0xFF)
+	lengthBuffer[3] = byte((bufferSize >> 24) & 0xFF)
+	_, err = conn.Write(lengthBuffer)
+	if err != nil {
+		t.Fatalf("Error writing length: %v", err)
+	}
+
+	// write the buffer to the connection
+	_, err = conn.Write(buffer)
+	if err != nil {
+		t.Fatalf("Error writing buffer: %v", err)
+	}
+
+	// read the 4 bytes that represent the length of the data
+	_, err = conn.Read(lengthBuffer)
+	if err != nil {
+		if err.Error() == "short buffer" {
+			t.Log(err)
+
+			_, err = conn.Read(lengthBuffer)
+			if err != nil {
+				t.Fatalf("Error reading length: %v", err)
+			}
+		} else {
+			t.Fatalf("Error reading length: %v", err)
+		}
+	}
+
+	// convert the length buffer to an integer
+	length := int(lengthBuffer[0]) | int(lengthBuffer[1])<<8 | int(lengthBuffer[2])<<16 | int(lengthBuffer[3])<<24
+	if length != bufferSize {
+		t.Fatalf("Expected length %d, got %d", bufferSize, length)
+	}
+
+	// create a second buffer to read the data into
+	readBuffer := make([]byte, bufferSize)
+
+	// continue reading from the connection until we have read all the data
+	totalRead := 0
+	for totalRead < bufferSize {
+		n, err := conn.Read(readBuffer[totalRead:])
+		if err != nil {
+			t.Fatalf("Error reading buffer: %v", err)
+		}
+		totalRead += n
+		fmt.Printf("Client Read %d bytes of %d\n", totalRead, bufferSize)
+	}
+
+	// ensure we read the correct number of bytes
+	if totalRead != bufferSize {
+		t.Fatalf("Expected to read %d bytes, read %d", bufferSize, totalRead)
+	}
+
+	// compare the two buffers
+	for i := range buffer {
+		if buffer[i] != readBuffer[i] {
+			t.Fatalf("Buffers do not match at index %d", i)
+		}
+	}
+
+	conn.Close()
 
 	t.Log("Buffers match")
 }

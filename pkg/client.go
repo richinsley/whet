@@ -3,6 +3,7 @@ package pkg
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -54,6 +55,8 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 	c := &Connection{}
 	c.sendMoreCh = make(chan struct{}, 1)
 	c.detached = detached
+	c.bearerToken = bearerToken
+	c.closed = false
 
 	// wait for both the data channel to open and the server handshake to complete
 	var wg sync.WaitGroup
@@ -326,7 +329,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 			}
 
 			// check if we can send more
-			if dataChannel.BufferedAmount() > maxBufferedAmount {
+			if dataChannel.BufferedAmount() > MaxBufferedAmount {
 				// Wait until the bufferedAmount becomes lower than the threshold
 				// fmt.Println("Buffered amount too high, waiting")
 				<-c.sendMoreCh
@@ -336,4 +339,190 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 
 	<-done
 	fmt.Println("Connection closed")
+}
+
+func DialClientConnection(signalServer string, targetName string, bearerToken string) (*Connection, error) {
+	// Create a SettingEngine and enable Detach
+	detached := true
+	errstr := ""
+
+	s := webrtc.SettingEngine{}
+	if detached {
+		s.DetachDataChannels()
+	}
+
+	// Create an API object with the engine
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
+
+	peerConnectionConfig := DefaultPeerConnectionConfig()
+	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create peer connection: %v", err)
+	}
+	// defer peerConnection.Close()
+
+	dataChannel, err := peerConnection.CreateDataChannel("data", dataChannelConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create data channel: %v", err)
+	}
+
+	// out channel object
+	c := &Connection{}
+	c.sendMoreCh = make(chan struct{}, 1)
+	c.detached = detached
+	c.bearerToken = bearerToken
+
+	// wait for both the data channel to open and the server handshake to complete
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	dataChannel.OnOpen(func() {
+		defer wg.Done()
+		if detached {
+			rawDetached, err := dataChannel.Detach()
+			if err != nil {
+				errstr = fmt.Sprintf("failed to detach data channel: %v\n", err)
+				return
+			}
+			c.rawDetached = rawDetached
+		}
+
+		// go func() {
+		readybuf := make([]byte, 12)
+		_, err := c.ReceiveRaw(readybuf)
+		if err != nil {
+			errstr = fmt.Sprintf("error receiving ready message: %v\n", err)
+			return
+		}
+
+		// The first message must be the "SERVER_READY" message
+		if bytes.Equal(readybuf, []byte("SERVER_READY")) {
+			fmt.Println("Received SERVER_READY, sending CLIENT_READY")
+			c.SendRaw([]byte("CLIENT_READY"))
+			c.clientReady = true
+		} else {
+			// handshake failed, close the connection
+			errstr = "handshake failed, closing connection"
+			return
+		}
+	})
+
+	// Set bufferedAmountLowThreshold so that we can get notified when
+	// we can send more
+	dataChannel.SetBufferedAmountLowThreshold(bufferedAmountLowThreshold)
+
+	// This callback is made when the current bufferedAmount becomes lower than the threshold
+	dataChannel.OnBufferedAmountLow(func() {
+		// fmt.Println("Buffered amount low, sending more")
+		// Make sure to not block this channel or perform long running operations in this callback
+		// This callback is executed by pion/sctp. If this callback is blocking it will stop operations
+		select {
+		case c.sendMoreCh <- struct{}{}:
+		default:
+		}
+	})
+
+	offer, err := peerConnection.CreateOffer(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	gatherComplete := webrtc.GatheringCompletePromise(peerConnection)
+
+	err = peerConnection.SetLocalDescription(offer)
+	if err != nil {
+		return nil, err
+	}
+
+	<-gatherComplete
+
+	offerString := peerConnection.LocalDescription().SDP
+
+	fmt.Println(offerString)
+
+	if strings.HasPrefix(signalServer, "http") {
+		signalServer = fmt.Sprintf("%s/whet/%s", signalServer, targetName)
+	} else {
+		signalServer = fmt.Sprintf("http://%s/whet/%s", signalServer, targetName)
+	}
+
+	// post the request to the whet server
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	fmt.Printf("WHET client using endpoint%s\n", signalServer)
+	req, err := http.NewRequest("POST", signalServer, bytes.NewBuffer([]byte(offerString)))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", "application/sdp")
+	if bearerToken != "" {
+		req.Header.Add("Authorization", "Bearer "+bearerToken)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != 201 && resp.StatusCode != 200 {
+		return nil, fmt.Errorf("non successful POST: %d", resp.StatusCode)
+	}
+
+	resourceUrl, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		return nil, err
+	}
+	base, err := url.Parse(signalServer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the connection ID
+	connectionID := resp.Header.Get("Connection-ID")
+	if connectionID == "" {
+		return nil, fmt.Errorf("Connection-ID not found in response")
+	}
+
+	answer := webrtc.SessionDescription{
+		Type: webrtc.SDPTypeAnswer,
+		SDP:  string(body),
+	}
+
+	err = peerConnection.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer.SDP})
+	if err != nil {
+		return nil, fmt.Errorf("failed to set remote description: %v", err)
+	}
+
+	// store the connection in the map
+	c.peerConnection = peerConnection
+	c.dataChannel = dataChannel
+	c.conn = nil
+	c.resourceURL = base.ResolveReference(resourceUrl).String()
+	c.clientReady = false
+
+	connectionsLock.Lock()
+	defer connectionsLock.Unlock()
+	OpenConnections[connectionID] = c
+
+	// wait for the connection handshake to complete
+	wg.Wait()
+
+	if errstr != "" {
+		return nil, errors.New(errstr)
+	}
+
+	return c, nil
 }

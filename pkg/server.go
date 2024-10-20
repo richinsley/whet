@@ -105,6 +105,7 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 			clientReady:    false,
 			sendMoreCh:     make(chan struct{}, 1),
 			detached:       detached,
+			bearerToken:    bearerToken,
 		}
 
 		var wg sync.WaitGroup
@@ -133,11 +134,13 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 						if err != nil {
 							fmt.Printf("Error reading from rawDetached: %v\n", err)
 							c.conn.Close()
+							c.closed = true
 							return
 						}
 						if n != 12 || !bytes.Equal(readymsg, []byte("CLIENT_READY")) {
 							fmt.Println("Handshake failed, closing connection")
 							c.conn.Close()
+							c.closed = true
 							return
 						}
 
@@ -232,6 +235,7 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 							// handshake failed, close the connection
 							fmt.Println("Handshake failed, closing connection")
 							c.conn.Close()
+							c.closed = true
 							return
 						}
 					}
@@ -303,9 +307,12 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 			fmt.Println("Deleting peer with ID:", id)
 
 			// stop the peer connection
-			if c != nil {
+			if c != nil && c.conn != nil {
 				// closing the net.Conn will also close the data channel and the peer connection
-				c.conn.Close()
+				if !c.closed {
+					c.conn.Close()
+					c.closed = true
+				}
 			}
 		}
 	} else {
@@ -342,8 +349,6 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 			return
 		}
 
-		// fmt.Printf("Read %d bytes from target\n", n)
-
 		// push the data to the data channel
 		if c.rawDetached != nil {
 			err = c.SendRaw(buffer[:n])
@@ -356,8 +361,8 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 			return
 		}
 
-		// check if we can send more
-		if c.dataChannel.BufferedAmount() > maxBufferedAmount {
+		// check if we need to wait before sending more
+		if c.dataChannel.BufferedAmount() > MaxBufferedAmount {
 			// Wait until the bufferedAmount becomes lower than the threshold
 			fmt.Println("Buffered amount too high, waiting")
 			<-c.sendMoreCh
