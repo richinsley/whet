@@ -29,3 +29,5 @@ whet
 # workspace files
 cmd/__debug*
 scratch
+scratch.md
+Dockerfile

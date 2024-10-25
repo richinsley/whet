@@ -20,6 +20,16 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 	// Extract the path suffix after "/whet/"
 	whetPath := "/whet/"
 	pathSuffix := strings.TrimPrefix(r.URL.Path, whetPath)
+
+	// Set CORS headers for all responses
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+	// Allow the Location  header to be exposed
+	w.Header().Set("Access-Control-Expose-Headers", "Location")
+
 	var err error
 	if r.Method == "POST" {
 		// Check bearer token if set before checking the target to prevent probing
@@ -285,9 +295,9 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 
 		// Before writing the response, set the Location header
 		// This is REQUIRED for the http DELETE handler to be called on teardown
+		// The connectionID MUST be the last part of the path and SHOULD be a UUID
 		location := originProto + r.Host + whetPath + distroUUID.String()
 		w.Header().Set("Location", location)
-		w.Header().Set("Connection-ID", distroUUID.String())
 
 		// write out the SDP response to the client in the response body
 		// we set the content type to application/sdp similar to the WHEP spec
@@ -315,6 +325,9 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 				}
 			}
 		}
+	} else if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
 	} else {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}

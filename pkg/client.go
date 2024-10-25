@@ -204,12 +204,15 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 		// return nil, nil, err
 	}
 
-	// Get the connection ID
-	connectionID := resp.Header.Get("Connection-ID")
-	if connectionID == "" {
-		fmt.Println("Connection-ID not found in response")
-		return
-	}
+	// Get the connection ID from the resource URL
+	connectionID := resourceUrl.Path[strings.LastIndex(resourceUrl.Path, "/")+1:]
+
+	// // Get the connection ID
+	// connectionID := resp.Header.Get("Connection-ID")
+	// if connectionID == "" {
+	// 	fmt.Println("Connection-ID not found in response")
+	// 	return
+	// }
 
 	answer := webrtc.SessionDescription{
 		Type: webrtc.SDPTypeAnswer,
@@ -481,7 +484,16 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 		return nil, fmt.Errorf("non successful POST: %d", resp.StatusCode)
 	}
 
-	resourceUrl, err := url.Parse(resp.Header.Get("Location"))
+	// location provides the resource URL that is used to manage the connection
+	// the last part of the URL is the connection ID
+	location := resp.Header.Get("Location")
+	if location == "" {
+		return nil, fmt.Errorf("location not found in response")
+	}
+
+	resourceUrl, err := url.Parse(location)
+	log.Default().Println("Resource URL: ", resourceUrl)
+	fmt.Printf("Resource URL %s\n", resourceUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -490,11 +502,13 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 		return nil, err
 	}
 
-	// Get the connection ID
-	connectionID := resp.Header.Get("Connection-ID")
-	if connectionID == "" {
-		return nil, fmt.Errorf("Connection-ID not found in response")
-	}
+	// Get the connection ID from the resource URL
+	connectionID := resourceUrl.Path[strings.LastIndex(resourceUrl.Path, "/")+1:]
+
+	// connectionID := resp.Header.Get("Connection-ID")
+	// if connectionID == "" {
+	// 	return nil, fmt.Errorf("Connection-ID not found in response: %s", resourceUrl)
+	// }
 
 	answer := webrtc.SessionDescription{
 		Type: webrtc.SDPTypeAnswer,

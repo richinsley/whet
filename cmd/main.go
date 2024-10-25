@@ -127,13 +127,16 @@ func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPo
 	token := os.Getenv("NGROK_AUTHTOKEN")
 	domain := os.Getenv("NGROK_DOMAIN")
 	var conf config.Tunnel = nil
+	// cors := true
+
+	// create the ngrok options
+	options := make([]config.HTTPEndpointOption, 0)
+
 	if domain != "" {
-		conf = config.HTTPEndpoint(
-			config.WithDomain(domain),
-		)
-	} else {
-		conf = config.HTTPEndpoint()
+		options = append(options, config.WithDomain(domain))
 	}
+
+	conf = config.HTTPEndpoint(options...)
 
 	listener, err := ngrok.Listen(ctx,
 		conf,
