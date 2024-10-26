@@ -32,12 +32,25 @@ func (t *targetAddrList) String() string {
 	return strings.Join(*t, ", ")
 }
 
+// Custom type to hold multiple folder paths with subdomains
+type serveFolderList []string
+
+// Implement the Set method for serveFolderList to satisfy the flag.Value interface
+func (t *serveFolderList) Set(value string) error {
+	*t = append(*t, value)
+	return nil
+}
+
+// Implement the String method for serveFolderList to satisfy the flag.Value interface
+func (t *serveFolderList) String() string {
+	return strings.Join(*t, ", ")
+}
+
 func main() {
 	// -serve -server=localhost:9999 -target=localhost:22
 	isServer := flag.Bool("serve", false, "Run in server mode")
 	isNGROK := flag.Bool("ngrok", false, "Run in ngrok server mode")
 	serverAddr := flag.String("server", "localhost:8080", "Server address for signaling")
-	// listenAddr := flag.String("listen", "localhost:8081", "Address to listen on for incoming TCP connections")
 	btoken := flag.String("token", "", "Bearer token for authorization")
 	detached := flag.Bool("detached", false, "Run in detached mode")
 
@@ -46,6 +59,9 @@ func main() {
 
 	var tcptargets targetAddrList
 	flag.Var(&tcptargets, "tcptarget", "Target address for server-side TCP connections (can specify multiple)")
+
+	var serveFolders serveFolderList
+	flag.Var(&serveFolders, "servefolder", "Folder path(s) to serve in the form subdomain=/absolute/path (can specify multiple)")
 
 	if *btoken != "" {
 		bearerToken = *btoken
@@ -65,9 +81,9 @@ func main() {
 
 		if *isNGROK {
 			ctx := context.Background()
-			runServerNGROK(ctx, targets, *detached)
+			runServerNGROK(ctx, targets, serveFolders, *detached)
 		} else {
-			runServer(*serverAddr, targets, *detached)
+			runServer(*serverAddr, targets, serveFolders, *detached)
 		}
 	} else {
 		// parse the listener addresses
@@ -122,7 +138,7 @@ func runClient(whetServerAddr string, listeners map[string]*pkg.ListenTargetPort
 	select {}
 }
 
-func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPort, detached bool) {
+func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, detached bool) {
 	// get ngrok AUTH_TOKEN and NGROK_DOMAIN from env NGROK_AUTHTOKEN (if you have a domain)
 	token := os.Getenv("NGROK_AUTHTOKEN")
 	domain := os.Getenv("NGROK_DOMAIN")
@@ -151,13 +167,55 @@ func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPo
 	http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
 		pkg.WhetHandler(w, r, targets, bearerToken, detached)
 	})
+
+	// Set up file servers for each folder in serveFolders
+	for _, folderSpec := range serveFolders {
+		parts := strings.Split(folderSpec, "=")
+		if len(parts) != 2 {
+			log.Printf("Invalid folder specification: %s (expected format: subdomain=/path)", folderSpec)
+			continue
+		}
+
+		subdomain := strings.Trim(parts[0], "/")
+		path := parts[1]
+
+		// Create a file server for this path
+		fs := http.FileServer(http.Dir(path))
+
+		// Create the handler for this subdomain
+		pattern := fmt.Sprintf("/%s/", subdomain)
+		http.Handle(pattern, http.StripPrefix(pattern, fs))
+
+		log.Printf("Serving files from %s at %s%s", path, listener.URL(), pattern)
+	}
+
 	panic(http.Serve(listener, nil))
 }
 
-func runServer(serverAddr string, targets map[string]*pkg.ForwardTargetPort, detached bool) {
+func runServer(serverAddr string, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, detached bool) {
 	http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
 		pkg.WhetHandler(w, r, targets, bearerToken, detached)
 	})
+
+	// Set up file servers for each folder in serveFolders
+	for _, folderSpec := range serveFolders {
+		parts := strings.Split(folderSpec, "=")
+		if len(parts) != 2 {
+			log.Printf("Invalid folder specification: %s (expected format: subdomain=/path)", folderSpec)
+			continue
+		}
+
+		subdomain := strings.Trim(parts[0], "/")
+		path := parts[1]
+
+		// Create a file server for this path
+		fs := http.FileServer(http.Dir(path))
+
+		// Create the handler for this subdomain
+		pattern := fmt.Sprintf("/%s/", subdomain)
+		http.Handle(pattern, http.StripPrefix(pattern, fs))
+	}
+
 	fmt.Printf("WHET signaling server running on http://%s\n", serverAddr)
 	panic(http.ListenAndServe(serverAddr, nil))
 }
