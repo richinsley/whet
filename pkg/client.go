@@ -443,10 +443,13 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 
 	fmt.Println(offerString)
 
+	// replace all "." with "/" and merge with the signal server URL base
+	targetName = strings.ReplaceAll(targetName, ".", "/")
+
 	if strings.HasPrefix(signalServer, "http") {
-		signalServer = fmt.Sprintf("%s/whet/%s", signalServer, targetName)
+		signalServer = fmt.Sprintf("%s/%s", signalServer, targetName)
 	} else {
-		signalServer = fmt.Sprintf("http://%s/whet/%s", signalServer, targetName)
+		signalServer = fmt.Sprintf("http://%s/%s", signalServer, targetName)
 	}
 
 	// post the request to the whet server
