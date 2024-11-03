@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"net"
 	"sync"
@@ -132,4 +133,24 @@ func (c *Connection) ReceiveRaw(data []byte) (int, error) {
 		return 0, errors.New("cannot receive raw data on non-detached connection")
 	}
 	return c.rawDetached.Read(data)
+}
+
+// setupWebRTCConnection creates a new WebRTC API and PeerConnection with the given settings.
+func setupWebRTCConnection(detached bool) (*webrtc.API, *webrtc.PeerConnection, error) {
+	// Create a SettingEngine and enable Detach
+	s := webrtc.SettingEngine{}
+	if detached {
+		s.DetachDataChannels()
+	}
+
+	// Create an API object with the engine
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
+
+	peerConnectionConfig := DefaultPeerConnectionConfig()
+	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create peer connection: %v", err)
+	}
+
+	return api, peerConnection, nil
 }

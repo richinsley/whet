@@ -1,3 +1,4 @@
+// server.go
 package pkg
 
 import (
@@ -88,20 +89,8 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 			return
 		}
 
-		// Create a SettingEngine and enable Detach
-		s := webrtc.SettingEngine{}
-		if detached {
-			s.DetachDataChannels()
-		}
-
-		// Create an API object with the engine
-		api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
-
-		// get the defaul peer connection config
-		defaultPeerConnectionConfig := DefaultPeerConnectionConfig()
-
-		// create a new peer connection
-		peerConnection, err := api.NewPeerConnection(defaultPeerConnectionConfig)
+		// create the WebRTC peer connection
+		_, peerConnection, err := setupWebRTCConnection(detached)
 		if err != nil {
 			http.Error(w, "Failed to create peer connection", http.StatusInternalServerError)
 			return

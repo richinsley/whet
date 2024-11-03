@@ -1,3 +1,4 @@
+// client.go
 package pkg
 
 import (
@@ -27,21 +28,13 @@ var dataChannelConfig = &webrtc.DataChannelInit{
 func HandleClientConnection(conn net.Conn, signalServer string, targetName string, bearerToken string, detached bool) {
 	defer conn.Close()
 
-	// Create a SettingEngine and enable Detach
-	s := webrtc.SettingEngine{}
-	if detached {
-		s.DetachDataChannels()
-	}
-
-	// Create an API object with the engine
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
-
-	peerConnectionConfig := DefaultPeerConnectionConfig()
-	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
+	// create a new WebRTC peer connection
+	_, peerConnection, err := setupWebRTCConnection(detached)
 	if err != nil {
-		fmt.Printf("Failed to create peer connection: %v\n", err)
+		fmt.Printf("failed to create peer connection: %v\n", err)
 		return
 	}
+
 	defer peerConnection.Close()
 	done := make(chan struct{})
 
@@ -355,20 +348,11 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 	detached := true
 	errstr := ""
 
-	s := webrtc.SettingEngine{}
-	if detached {
-		s.DetachDataChannels()
-	}
-
-	// Create an API object with the engine
-	api := webrtc.NewAPI(webrtc.WithSettingEngine(s))
-
-	peerConnectionConfig := DefaultPeerConnectionConfig()
-	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
+	// create a new WebRTC peer connection
+	_, peerConnection, err := setupWebRTCConnection(detached)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create peer connection: %v", err)
 	}
-	// defer peerConnection.Close()
 
 	dataChannel, err := peerConnection.CreateDataChannel("data", dataChannelConfig)
 	if err != nil {
