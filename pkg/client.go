@@ -64,6 +64,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 
 	dataChannel.OnOpen(func() {
 		if detached {
+			// Detach the data channel so we can read/write raw bytes
 			rawDetached, err := dataChannel.Detach()
 			if err != nil {
 				fmt.Printf("Failed to detach data channel: %v\n", err)
@@ -75,47 +76,49 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 		fmt.Println("Data channel opened")
 		wg.Done()
 
-		go func() {
-			readybuf := make([]byte, 12)
-			_, err := c.ReceiveRaw(readybuf)
-			if err != nil {
-				fmt.Printf("Error receiving ready message: %v\n", err)
-				return
-			}
-
-			// The first message must be the "SERVER_READY" message
-			if bytes.Equal(readybuf, []byte("SERVER_READY")) {
-				fmt.Println("Received SERVER_READY, sending CLIENT_READY")
-				c.SendRaw([]byte("CLIENT_READY"))
-				c.clientReady = true
-				wg.Done()
-			} else {
-				// handshake failed, close the connection
-				fmt.Println("Handshake failed, closing connection")
-				conn.Close()
-				return
-			}
-
-			bufferSize := maxBufferSize
-			buffer := make([]byte, bufferSize)
-			for {
-				n, err := c.ReceiveRaw(buffer)
-				if n == 0 || err != nil {
-					fmt.Println("Connection closed by client")
-					break
-				}
-
-				_, err = conn.Write(buffer[:n])
+		// if we are detached, we need to start a goroutine to handle the data channel raw read/write
+		if detached {
+			go func() {
+				readybuf := make([]byte, 12)
+				_, err := c.ReceiveRaw(readybuf)
 				if err != nil {
-					fmt.Printf("Error writing to TCP connection: %v\n", err)
-					break
+					fmt.Printf("Error receiving ready message: %v\n", err)
+					return
 				}
-			}
-		}()
+
+				// The first message must be the "SERVER_READY" message
+				if bytes.Equal(readybuf, []byte("SERVER_READY")) {
+					fmt.Println("Received SERVER_READY, sending CLIENT_READY")
+					c.SendRaw([]byte("CLIENT_READY"))
+					c.clientReady = true
+					wg.Done()
+				} else {
+					// handshake failed, close the connection
+					fmt.Println("Handshake failed, closing connection")
+					conn.Close()
+					return
+				}
+
+				bufferSize := maxBufferSize
+				buffer := make([]byte, bufferSize)
+				for {
+					n, err := c.ReceiveRaw(buffer)
+					if n == 0 || err != nil {
+						fmt.Println("Connection closed by client")
+						break
+					}
+
+					_, err = conn.Write(buffer[:n])
+					if err != nil {
+						fmt.Printf("Error writing to TCP connection: %v\n", err)
+						break
+					}
+				}
+			}()
+		}
 	})
 
-	// Set bufferedAmountLowThreshold so that we can get notified when
-	// we can send more
+	// Set bufferedAmountLowThreshold so that we can get notified when we can send more
 	dataChannel.SetBufferedAmountLowThreshold(bufferedAmountLowThreshold)
 
 	// This callback is made when the current bufferedAmount becomes lower than the threshold
@@ -242,16 +245,19 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 					dataChannel.Send([]byte("CLIENT_READY"))
 					c.clientReady = true
 					wg.Done()
-					done <- struct{}{}
 					return
 				} else {
 					// handshake failed, close the connection
 					fmt.Println("Handshake failed, closing connection")
 					conn.Close()
+
+					// send an item to the done channel to signal the connection is closed
 					done <- struct{}{}
 					return
 				}
 			}
+
+			// Write the data out to the client side TCP connection
 			_, err := conn.Write(msg.Data)
 			if err != nil {
 				fmt.Printf("Error writing to TCP connection: %v\n", err)
@@ -290,6 +296,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 
 				// close the ice connection
 				c.peerConnection.Close()
+
 				// call the "DELETE" on the host ResourceUrl if one was provided
 				if c.resourceURL != "" {
 					req, err := http.NewRequest("DELETE", c.resourceURL, nil)
@@ -334,7 +341,6 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 			// check if we can send more
 			if dataChannel.BufferedAmount() > MaxBufferedAmount {
 				// Wait until the bufferedAmount becomes lower than the threshold
-				// fmt.Println("Buffered amount too high, waiting")
 				<-c.sendMoreCh
 			}
 		}
@@ -390,7 +396,6 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 			c.rawDetached = rawDetached
 		}
 
-		// go func() {
 		readybuf := make([]byte, 12)
 		_, err := c.ReceiveRaw(readybuf)
 		if err != nil {
@@ -507,11 +512,6 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 
 	// Get the connection ID from the resource URL
 	connectionID := resourceUrl.Path[strings.LastIndex(resourceUrl.Path, "/")+1:]
-
-	// connectionID := resp.Header.Get("Connection-ID")
-	// if connectionID == "" {
-	// 	return nil, fmt.Errorf("Connection-ID not found in response: %s", resourceUrl)
-	// }
 
 	answer := webrtc.SessionDescription{
 		Type: webrtc.SDPTypeAnswer,
