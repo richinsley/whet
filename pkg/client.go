@@ -72,23 +72,9 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 		// if we are detached, we need to start a goroutine to handle the data channel raw read/write
 		if detached {
 			go func() {
-				readybuf := make([]byte, 12)
-				_, err := c.ReceiveRaw(readybuf)
-				if err != nil {
-					fmt.Printf("Error receiving ready message: %v\n", err)
-					return
-				}
-
-				// The first message must be the "SERVER_READY" message
-				if bytes.Equal(readybuf, []byte("SERVER_READY")) {
-					fmt.Println("Received SERVER_READY, sending CLIENT_READY")
-					c.SendRaw([]byte("CLIENT_READY"))
-					c.clientReady = true
-					wg.Done()
-				} else {
-					// handshake failed, close the connection
-					fmt.Println("Handshake failed, closing connection")
-					conn.Close()
+				// Handshake
+				if err := handleHandshake(c, false, &wg); err != nil {
+					fmt.Printf("Handshake failed: %v\n", err)
 					return
 				}
 
@@ -380,21 +366,10 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 			c.rawDetached = rawDetached
 		}
 
-		readybuf := make([]byte, 12)
-		_, err := c.ReceiveRaw(readybuf)
-		if err != nil {
-			errstr = fmt.Sprintf("error receiving ready message: %v\n", err)
-			return
-		}
 
-		// The first message must be the "SERVER_READY" message
-		if bytes.Equal(readybuf, []byte("SERVER_READY")) {
-			fmt.Println("Received SERVER_READY, sending CLIENT_READY")
-			c.SendRaw([]byte("CLIENT_READY"))
-			c.clientReady = true
-		} else {
-			// handshake failed, close the connection
-			errstr = "handshake failed, closing connection"
+		// Handshake
+		if err := handleHandshake(c, false, nil); err != nil {
+			errstr = fmt.Sprintf("handshake failed: %v\n", err)
 			return
 		}
 	})

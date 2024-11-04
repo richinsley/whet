@@ -120,31 +120,21 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 			dataChannel.OnOpen(func() {
 				// detach the channel if we're in detached mode
 				if detached {
-					raw, dErr := dataChannel.Detach()
+					rawDetached, dErr := dataChannel.Detach()
 					if dErr != nil {
 						panic(dErr)
 					}
-					c.rawDetached = raw
+					c.rawDetached = rawDetached
 
 					go func() {
-						// The first message from the client must be the "CLIENT_READY" message
-						readymsg := make([]byte, 12)
-						n, err := c.rawDetached.Read(readymsg)
+						// Handshake
+						err := handleHandshake(c, true, &wg)
 						if err != nil {
-							fmt.Printf("Error reading from rawDetached: %v\n", err)
+							fmt.Printf("Error handling handshake: %v\n", err)
 							c.conn.Close()
 							c.closed = true
 							return
 						}
-						if n != 12 || !bytes.Equal(readymsg, []byte("CLIENT_READY")) {
-							fmt.Println("Handshake failed, closing connection")
-							c.conn.Close()
-							c.closed = true
-							return
-						}
-
-						c.clientReady = true
-						wg.Done()
 
 						defer c.conn.Close()
 						buffer := make([]byte, maxBufferSize)
@@ -181,10 +171,10 @@ func WhetHandler(w http.ResponseWriter, r *http.Request, targets map[string]*For
 
 					return
 				} else {
-					// Send SERVER_READY as soon as the channel opens
+					// Send SERVER_READY as soon as the channel opens,  The handshake is completed in the proxy goroutine above
+					// by checking the first message from the client
 					c.conn = conn
 					c.dataChannel = dataChannel
-					fmt.Println("Sending SERVER_READY message")
 					if c.rawDetached != nil {
 						_, err := c.rawDetached.Write([]byte("SERVER_READY"))
 						if err != nil {

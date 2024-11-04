@@ -210,7 +210,7 @@ func TestServerClientConn(t *testing.T) {
 	}()
 
 	// create the forward targets
-	targetID := "remoterange"
+	targetID := "whet/remoterange"
 	targets := map[string]*ForwardTargetPort{
 		"remoterange": {
 			TargetName: targetID,

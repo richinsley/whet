@@ -207,7 +207,7 @@ func configureSignalServer(mux *http.ServeMux, targets map[string]*pkg.ForwardTa
 
 	// Handle WHET signals
 	mux.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
-		pkg.WhetHandler(w, r, targets, bearerToken, false)
+		pkg.WhetHandler(w, r, targets, bearerToken, detached)
 	})
 
 	// Set up file servers for each folder in serveFolders
