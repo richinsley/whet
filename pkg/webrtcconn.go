@@ -107,7 +107,7 @@ func (c *WebRTCConn) Close() error {
 			}
 			_, err = client.Do(req)
 			if err != nil {
-				return fmt.Errorf("Failed http DELETE request: %s\n", err)
+				return fmt.Errorf("failed http DELETE request: %s", err)
 			}
 		}
 	}

@@ -1,3 +1,3 @@
-# WHET
-WebRTC-HTTP Encapsulated Tunnel
+# WHAP
+WebRTC HTTP Ad Hoc Proxy
 

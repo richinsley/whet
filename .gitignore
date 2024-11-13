@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+.DS_Store
 
 # Test binary, built with `go test -c`
 *.test
@@ -25,6 +26,7 @@ go.work.sum
 .env
 .vscode/
 whet
+whap
 
 # workspace files
 cmd/__debug*
