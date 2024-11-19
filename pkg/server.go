@@ -2,7 +2,6 @@
 package pkg
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -279,47 +278,45 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 			// handle the data channel opening
 			dataChannel.OnOpen(func() {
 				// detach the channel if we're in detached mode
-				if ws.Detached {
-					rawDetached, dErr := dataChannel.Detach()
-					if dErr != nil {
-						panic(dErr)
-					}
-					c.rawDetached = rawDetached
-
-					go func() {
-						// Handshake
-						err := handleHandshake(c, true, &wg)
-						if err != nil {
-							fmt.Printf("Error handling handshake: %v\n", err)
-							if c.conn != nil {
-								c.conn.Close()
-							}
-							c.closed = true
-							return
-						}
-
-						if c.conn != nil {
-							// we have a TCP connection, read from the data channel and write to the TCP connection
-							// until the data channel is closed
-							defer c.conn.Close()
-							buffer := make([]byte, maxBufferSize)
-							for {
-								n, err := c.ReceiveRaw(buffer)
-								if n == 0 || err != nil {
-									fmt.Println("Connection closed by client")
-									break
-								}
-
-								// write all the data to the TCP connection
-								err = c.SendData(buffer[:n])
-								if err != nil {
-									fmt.Printf("Error writing to target connection: %v\n", err)
-									break
-								}
-							}
-						}
-					}()
+				rawDetached, dErr := dataChannel.Detach()
+				if dErr != nil {
+					panic(dErr)
 				}
+				c.rawDetached = rawDetached
+
+				go func() {
+					// Handshake
+					err := handleHandshake(c, true, &wg)
+					if err != nil {
+						fmt.Printf("Error handling handshake: %v\n", err)
+						if c.conn != nil {
+							c.conn.Close()
+						}
+						c.closed = true
+						return
+					}
+
+					if c.conn != nil {
+						// we have a TCP connection, read from the data channel and write to the TCP connection
+						// until the data channel is closed
+						defer c.conn.Close()
+						buffer := make([]byte, maxBufferSize)
+						for {
+							n, err := c.ReceiveRaw(buffer)
+							if n == 0 || err != nil {
+								fmt.Println("Connection closed by client")
+								break
+							}
+
+							// write all the data to the TCP connection
+							err = c.SendData(buffer[:n])
+							if err != nil {
+								fmt.Printf("Error writing to target connection: %v\n", err)
+								break
+							}
+						}
+					}
+				}()
 
 				fmt.Println("Data channel opened")
 				c.dataChannel = dataChannel
@@ -330,8 +327,6 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						if c.rawDetached != nil {
 							c.rawDetached.Write([]byte("SERVER_ERROR"))
-						} else {
-							dataChannel.Send([]byte("SERVER_ERROR"))
 						}
 						fmt.Printf("Error connecting to target: %v\n", err)
 
@@ -348,11 +343,6 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 							if err != nil {
 								fmt.Printf("Error sending SERVER_READY: %v\n", err)
 							}
-						} else {
-							err := dataChannel.Send([]byte("SERVER_READY"))
-							if err != nil {
-								fmt.Printf("Error sending SERVER_READY: %v\n", err)
-							}
 						}
 						wg.Done()
 
@@ -364,11 +354,6 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 					// Send SERVER_READY as soon as the channel opens,  The handshake is completed in the proxy goroutine above
 					if c.rawDetached != nil {
 						_, err := c.rawDetached.Write([]byte("SERVER_READY"))
-						if err != nil {
-							fmt.Printf("Error sending SERVER_READY: %v\n", err)
-						}
-					} else {
-						err := dataChannel.Send([]byte("SERVER_READY"))
 						if err != nil {
 							fmt.Printf("Error sending SERVER_READY: %v\n", err)
 						}
@@ -396,33 +381,6 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 				default:
 				}
 			})
-
-			if !ws.Detached {
-				// handle the data channel messages
-				// Server side WebRTC to TCP proxy (input from WebRTC, output to local TCP)
-				dataChannel.OnMessage(func(msg webrtc.DataChannelMessage) {
-					if !c.clientReady {
-						// The first message from the client must be the "CLIENT_READY" message
-						if bytes.Equal(msg.Data, []byte("CLIENT_READY")) {
-							fmt.Println("received CLIENT_READY message")
-							c.clientReady = true
-							wg.Done()
-							return
-						} else {
-							// handshake failed, close the connection
-							fmt.Println("Handshake failed, closing connection")
-							c.conn.Close()
-							c.closed = true
-							return
-						}
-					}
-
-					_, err := c.conn.Write(msg.Data)
-					if err != nil {
-						fmt.Printf("Error writing to target connection: %v\n", err)
-					}
-				})
-			}
 		})
 
 		// set the remote description
