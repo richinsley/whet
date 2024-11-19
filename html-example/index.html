@@ -1,0 +1,125 @@
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC Proxy Test</title>
+</head>
+<body>
+    <h1>WebRTC Proxy Test</h1>
+    <p>Check the browser console for connection status</p>
+    <script src="webrtc-proxy.js"></script>
+</body>
+</html> -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MPEG-TS Stream via WebRTC Proxy</title>
+    <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+    <!-- Assume the WebRTCProxyConnection class is in proxy.js -->
+    <script src="webrtc-proxy.js"></script>
+</head>
+<body>
+    <video id="videoElement" controls></video>
+    
+    <script>
+        // Custom FLV.js loader that uses WebRTC proxy
+        class WebRTCProxyLoader {
+            constructor(signalServer, targetName, bearerToken) {
+                this.proxy = new WebRTCProxyConnection(signalServer, targetName, bearerToken);
+                this._onDataArrival = null;
+                this.destroyed = false;
+            }
+
+            async open() {
+                if (this.destroyed) return;
+                
+                try {
+                    await this.proxy.connect();
+                    
+                    // Setup data handler
+                    this.proxy.onData((data) => {
+                        if (this._onDataArrival && !this.destroyed) {
+                            this._onDataArrival(data);
+                        }
+                    });
+                } catch (e) {
+                    console.error('Failed to open proxy connection:', e);
+                    throw e;
+                }
+            }
+
+            async destroy() {
+                this.destroyed = true;
+                await this.proxy.close();
+            }
+
+            // Required by flv.js loader interface
+            onDataArrival(callback) {
+                this._onDataArrival = callback;
+            }
+
+            abort() {
+                this.destroy();
+            }
+        }
+
+        async function setupStream() {
+            if (flvjs.isSupported()) {
+                const videoElement = document.getElementById('videoElement');
+                
+                // Create custom loader
+                const loader = new WebRTCProxyLoader(
+                    'http://192.168.0.28:8083',  // Your signal server
+                    'prism',                     // Your target name
+                    ''                           // Bearer token if needed
+                );
+
+                // Create flv player
+                const flvPlayer = flvjs.createPlayer({
+                    type: 'flv',
+                    isLive: true,
+                    hasAudio: true,
+                    hasVideo: true
+                }, {
+                    customLoader: WebRTCProxyLoader,
+                    customLoaderObj: loader,
+                    enableStashBuffer: false,    // Disable stash buffer for live streaming
+                    stashInitialSize: 128        // Smaller stash size for lower latency
+                });
+
+                flvPlayer.attachMediaElement(videoElement);
+                
+                try {
+                    await loader.open();
+                    flvPlayer.load();
+                    await videoElement.play();
+                } catch (e) {
+                    console.error('Failed to start playback:', e);
+                }
+
+                // Cleanup on page unload
+                window.addEventListener('beforeunload', () => {
+                    flvPlayer.destroy();
+                    loader.destroy();
+                });
+
+                // Optional: Add error handling
+                flvPlayer.on(flvjs.Events.ERROR, (errorType, errorDetail) => {
+                    console.error('FLV player error:', errorType, errorDetail);
+                });
+
+                // Optional: Add statistics monitoring
+                setInterval(() => {
+                    const stats = flvPlayer.statistics;
+                    console.log('Player stats:', stats);
+                }, 1000);
+            } else {
+                console.error('FLV.js is not supported in this browser');
+            }
+        }
+
+        // Start streaming when page loads
+        window.addEventListener('load', setupStream);
+    </script>
+</body>
+</html>

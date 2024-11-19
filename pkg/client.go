@@ -345,7 +345,7 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 		return nil, fmt.Errorf("failed to create data channel: %v", err)
 	}
 
-	// out channel object
+	// our channel object
 	c := &Connection{}
 	c.sendMoreCh = make(chan struct{}, 1)
 	c.detached = detached

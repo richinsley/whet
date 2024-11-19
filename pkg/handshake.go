@@ -22,13 +22,17 @@ func handleDetachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup
 		// We just need to ensure the first message from the client must be the CLIENT_READY message
 		n, err := conn.rawDetached.Read(readybuf)
 		if err != nil {
-			conn.conn.Close()
+			if conn.conn != nil {
+				conn.conn.Close()
+			}
 			conn.closed = true
 			return fmt.Errorf("error reading from rawDetached: %v", err)
 		}
 
 		if n != 12 || !bytes.Equal(readybuf, []byte("CLIENT_READY")) {
-			conn.conn.Close()
+			if conn.conn != nil {
+				conn.conn.Close()
+			}
 			conn.closed = true
 			return fmt.Errorf("handshake failed, closing connection")
 		}

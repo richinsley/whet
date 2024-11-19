@@ -36,12 +36,20 @@ import (
 -tcplisten range-10010:8824
 */
 
-// ForwardTargetPort represents a target port to forward from the server to the client
+type ForwardTargetType int
+
+const (
+	ForwardTargetTypeTCP ForwardTargetType = iota
+	ForwardTargetTypeListener
+)
+
+// ForwardTargetPort represents a target port to forward from the server to the client, or a target listener from the server to the client
 type ForwardTargetPort struct {
-	TargetName string
-	Host       string
-	StartPort  int
-	PortCount  int
+	TargetName        string
+	Host              string
+	StartPort         int
+	PortCount         int
+	ForwardTargetType ForwardTargetType
 }
 
 // represents a client-side port forward to a target port
@@ -148,6 +156,7 @@ func ParseForwardTargetPortFromString(id string) (*ForwardTargetPort, error) {
 		Host:       hostParts[0],
 		StartPort:  startPort,
 		PortCount:  endPort - startPort + 1,
+		ForwardTargetType: ForwardTargetTypeTCP,
 	}, nil
 }
 

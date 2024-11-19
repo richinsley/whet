@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -94,14 +95,9 @@ func TestServerClient(t *testing.T) {
 		},
 	}
 
-	// create the whet handler
-	go func() {
-		http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
-			WhetHandler(w, r, targets, bearerToken, false)
-		})
-		fmt.Printf("WHET signaling server running on http://%s\n", whetHandlerAddr)
-		http.ListenAndServe("127.0.0.1:8088", nil)
-	}()
+	// create the server
+	s, _ := NewWhetServer(bearerToken, targets, nil, nil, true)
+	s.StartWithAddress(whetHandlerAddr, false)
 
 	go func() {
 		listener, err := net.Listen("tcp", clientTargetAddr)
@@ -196,10 +192,10 @@ func TestServerClient(t *testing.T) {
 	t.Log("Buffers match")
 }
 
-// TestServerClientConn create a server that port forwards 9999 and listen for whet handler on 8088
+// TestServerClientConn creates a server that port forwards 9999 and listen for whet handler on 8088
 // create a client that establishes a port forward to 10000
 func TestServerClientConn(t *testing.T) {
-	whetHandlerAddr := "127.0.0.1:8088"
+	whetHandlerAddr := "127.0.0.1:8089"
 	serverTargetAddr := "127.0.0.1:9999"
 	bufferSize := 1024 * 1024
 	bearerToken := ""
@@ -220,15 +216,11 @@ func TestServerClientConn(t *testing.T) {
 		},
 	}
 
-	// create the whet handler
-	go func() {
-		http.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
-			WhetHandler(w, r, targets, bearerToken, true)
-		})
-		fmt.Printf("WHET signaling server running on http://%s\n", whetHandlerAddr)
-		http.ListenAndServe(whetHandlerAddr, nil)
-	}()
+	// create the server
+	s, _ := NewWhetServer(bearerToken, targets, nil, nil, true)
+	s.StartWithAddress(whetHandlerAddr, false)
 
+	// http://127.0.0.1:8089/whet/remoterange
 	conn, err := DialWebRTCConn(whetHandlerAddr, targetID, bearerToken)
 	if err != nil {
 		t.Fatalf("Error connecting to client target: %v", err)
@@ -307,4 +299,159 @@ func TestServerClientConn(t *testing.T) {
 	conn.Close()
 
 	t.Log("Buffers match")
+}
+
+// http listen and serve example
+func helloWorldHTTPHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello World")
+}
+
+func hellWorldConnHandler(conn net.Conn) {
+	conn.Write([]byte("Hello World"))
+	conn.Close()
+}
+
+func TestTCPServerListener(t *testing.T) {
+	// create a whet server
+	whetHandlerAddr := "127.0.0.1:8089"
+	clientTargetAddr := "127.0.0.1:10000"
+	bearerToken := ""
+	targetID := "hello"
+
+	// create the server with no forward targets
+	s, _ := NewWhetServer(bearerToken, nil, nil, nil, true)
+	s.StartWithAddress(whetHandlerAddr, false)
+
+	// add a target to the server for a listener
+	listener, err := s.AddListener(targetID)
+	if err != nil {
+		t.Fatalf("Error adding listener: %v", err)
+	}
+
+	// start the listener on the server side
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Printf("Error accepting connection: %v\n", err)
+		}
+		hellWorldConnHandler(conn)
+	}()
+
+	// start the client socket listener on the client side
+	// this will forward the connection to the server side
+	go func() {
+		listener, err := net.Listen("tcp", clientTargetAddr)
+		if err != nil {
+			panic(err)
+		}
+		defer listener.Close()
+
+		fmt.Printf("Listening for TCP connections on %s\n", clientTargetAddr)
+
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				fmt.Printf("Error accepting connection: %v\n", err)
+				continue
+			}
+
+			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+		}
+	}()
+
+	// wait for 1 seconds for the server and client to start
+	time.Sleep(1 * time.Second)
+
+	// open a tcp connection to the client target address
+	conn, err := net.Dial("tcp", clientTargetAddr)
+	if err != nil {
+		t.Fatalf("Error connecting to client target: %v", err)
+	}
+
+	// read the response from the server
+	response := make([]byte, 128)
+	n, err := conn.Read(response)
+	if err != nil {
+		t.Fatalf("Error reading response: %v", err)
+	}
+	err = conn.Close()
+	if err != nil {
+		t.Fatalf("Error closing connection: %v", err)
+	}
+
+	if string(response[:n]) != "Hello World" {
+		t.Errorf("Expected 'Hello World', got '%s'", response)
+	} else {
+		fmt.Println("Test passed: Got expected response")
+	}
+}
+
+func TestHTTPServerListener(t *testing.T) {
+	// create a whet server
+	whetHandlerAddr := "127.0.0.1:8089"
+	clientTargetAddr := "127.0.0.1:10000"
+	bearerToken := ""
+	targetID := "hello"
+
+	// create the server with no forward targets
+	s, _ := NewWhetServer(bearerToken, nil, nil, nil, true)
+	s.StartWithAddress(whetHandlerAddr, false)
+
+	// add a target to the server for a listener
+	listener, err := s.AddListener(targetID)
+	if err != nil {
+		t.Fatalf("Error adding listener: %v", err)
+	}
+	t.Logf("Added listener %v", listener)
+	http.HandleFunc("/", helloWorldHTTPHandler)
+
+	// start the http server with the listener on the server side
+	// http.server will receive whet connections instead of normal tcp connections
+	go func() {
+		http.Serve(listener, nil)
+	}()
+
+	// start the client socket listener on the client side
+	// this will forward the connection to the server side
+	go func() {
+		listener, err := net.Listen("tcp", clientTargetAddr)
+		if err != nil {
+			panic(err)
+		}
+		defer listener.Close()
+
+		fmt.Printf("Listening for TCP connections on %s\n", clientTargetAddr)
+
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				fmt.Printf("Error accepting connection: %v\n", err)
+				continue
+			}
+
+			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+		}
+	}()
+
+	// wait for 1 seconds for the server and client to start
+	time.Sleep(1 * time.Second)
+
+	resp, err := http.Get("http://" + clientTargetAddr)
+	if err != nil {
+		t.Errorf("HTTP GET failed: %v", err)
+		return
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Errorf("Failed to read response body: %v", err)
+		return
+	}
+	resp.Body.Close()
+
+	if string(bodyBytes) != "Hello World" {
+		t.Errorf("Expected 'Hello World', got '%s'", bodyBytes)
+	} else {
+		fmt.Println("Test passed: Got expected response")
+	}
 }

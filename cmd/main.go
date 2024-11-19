@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -49,21 +46,15 @@ func (t *serveFolderList) String() string {
 	return strings.Join(*t, ", ")
 }
 
-// type to represent proxy targets
-type ProxyTarget struct {
-	Subdomain string
-	Address   string
-}
-
 // Custom type to hold multiple proxy targets
-type proxyTargetList []ProxyTarget
+type proxyTargetList []pkg.ProxyTarget
 
 func (p *proxyTargetList) Set(value string) error {
 	parts := strings.Split(value, "=")
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid proxy target format: %s (expected format: subdomain=address:port)", value)
 	}
-	*p = append(*p, ProxyTarget{
+	*p = append(*p, pkg.ProxyTarget{
 		Subdomain: strings.Trim(parts[0], "/"),
 		Address:   parts[1],
 	})
@@ -178,56 +169,7 @@ func runClient(whetServerAddr string, listeners map[string]*pkg.ListenTargetPort
 	select {}
 }
 
-func configureSignalServer(mux *http.ServeMux, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, proxyTargets []ProxyTarget, detached bool) {
-	// Create a reverse proxy handler
-	proxyHandler := func(target string) http.Handler {
-		return &httputil.ReverseProxy{
-			Director: func(req *http.Request) {
-				targetURL, _ := url.Parse("http://" + target)
-				req.URL.Scheme = targetURL.Scheme
-				req.URL.Host = targetURL.Host
-
-				// Remove the first subdomain from the path
-				parts := strings.Split(req.URL.Path, "/")
-				if len(parts) > 2 {
-					req.URL.Path = "/" + strings.Join(parts[2:], "/")
-				}
-
-				// Update the Host header
-				req.Host = targetURL.Host
-			},
-		}
-	}
-
-	// Handle proxy targets first
-	for _, proxy := range proxyTargets {
-		pattern := fmt.Sprintf("/%s/", proxy.Subdomain)
-		mux.Handle(pattern, proxyHandler(proxy.Address))
-	}
-
-	// Handle WHET signals
-	mux.HandleFunc("/whet/", func(w http.ResponseWriter, r *http.Request) {
-		pkg.WhetHandler(w, r, targets, bearerToken, detached)
-	})
-
-	// Set up file servers for each folder in serveFolders
-	for _, folderSpec := range serveFolders {
-		parts := strings.Split(folderSpec, "=")
-		if len(parts) != 2 {
-			log.Printf("Invalid folder specification: %s (expected format: subdomain=/path)", folderSpec)
-			continue
-		}
-
-		subdomain := strings.Trim(parts[0], "/")
-		path := parts[1]
-
-		fs := http.FileServer(http.Dir(path))
-		pattern := fmt.Sprintf("/%s/", subdomain)
-		mux.Handle(pattern, http.StripPrefix(pattern, fs))
-	}
-}
-
-func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, proxyTargets []ProxyTarget, detached bool) {
+func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, proxyTargets []pkg.ProxyTarget, detached bool) {
 	token := os.Getenv("NGROK_AUTHTOKEN")
 	domain := os.Getenv("NGROK_DOMAIN")
 	var conf config.Tunnel = nil
@@ -246,18 +188,25 @@ func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPo
 		panic(err)
 	}
 
-	// Create new ServeMux
-	mux := http.NewServeMux()
-	configureSignalServer(mux, targets, serveFolders, proxyTargets, detached)
-
-	panic(http.Serve(listener, mux))
+	s, err := pkg.NewWhetServer(bearerToken, targets, serveFolders, proxyTargets, detached)
+	if err != nil {
+		log.Fatalf("Failed to create WHET server: %v", err)
+	}
+	err = s.StartWithListener(listener, true)
+	if err != nil {
+		log.Fatalf("Failed to start WHET server: %v", err)
+	}
 }
 
-func runServer(serverAddr string, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, proxyTargets []ProxyTarget, detached bool) {
-	// Create new ServeMux
-	mux := http.NewServeMux()
-	configureSignalServer(mux, targets, serveFolders, proxyTargets, detached)
+func runServer(serverAddr string, targets map[string]*pkg.ForwardTargetPort, serveFolders []string, proxyTargets []pkg.ProxyTarget, detached bool) {
+	// create the regular HTTP server
+	s, err := pkg.NewWhetServer(bearerToken, targets, serveFolders, proxyTargets, detached)
+	if err != nil {
+		log.Fatalf("Failed to create WHET server: %v", err)
+	}
 
-	fmt.Printf("WHET signaling server running on http://%s\n", serverAddr)
-	panic(http.ListenAndServe(serverAddr, mux))
+	err = s.StartWithAddress(serverAddr, true)
+	if err != nil {
+		log.Fatalf("Failed to start WHET server: %v", err)
+	}
 }

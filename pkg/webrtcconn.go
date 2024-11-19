@@ -42,6 +42,21 @@ func DialWebRTCConn(signalServer string, targetName string, bearerToken string) 
 	}, nil
 }
 
+// Create a new WebRTCConn from a listener connection on the server side
+func ListenerWebRTCConn(connection *Connection) (*WebRTCConn, error) {
+	return &WebRTCConn{
+		connection:    connection,
+		localAddr:     nil,
+		remoteAddr:    nil,
+		bearerToken:   "",
+		closed:        false,
+		readBuffer:    make([]byte, maxBufferSize),
+		bufferSize:    0,
+		bufferPos:     0,
+		maxBufferSize: maxBufferSize,
+	}, nil
+}
+
 func (c *WebRTCConn) Read(b []byte) (n int, err error) {
 	// we'll need to use an internal buffer to read up to maxBufferSize bytes to
 	// prevent the dreaded 'short buffer' error

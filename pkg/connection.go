@@ -114,8 +114,8 @@ func (c *Connection) SendRaw(data []byte) error {
 	return nil
 }
 
-// SendTCP sends data over the TCP connection until all data has been sent or an error occurs.
-func (c *Connection) SendTCP(data []byte) error {
+// SendData sends data over the TCP connection until all data has been sent or an error occurs.
+func (c *Connection) SendData(data []byte) error {
 	sentData := 0
 	for sentData < len(data) {
 		n, err := c.conn.Write(data[sentData:])
