@@ -366,7 +366,6 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 			c.rawDetached = rawDetached
 		}
 
-
 		// Handshake
 		if err := handleHandshake(c, false, nil); err != nil {
 			errstr = fmt.Sprintf("handshake failed: %v\n", err)

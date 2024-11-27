@@ -1,14 +1,18 @@
 package pkg
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
+
+var serverSpinupTime = 2 * time.Second
 
 func simpleMirrorServer(address string, t *testing.T) {
 	listener, err := net.Listen("tcp", address)
@@ -108,19 +112,17 @@ func TestServerClient(t *testing.T) {
 
 		fmt.Printf("Listening for TCP connections on %s\n", clientTargetAddr)
 
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				fmt.Printf("Error accepting connection: %v\n", err)
-				continue
-			}
-
-			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Printf("Error accepting connection: %v\n", err)
+			os.Exit(1)
 		}
+
+		go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
 	}()
 
-	// wait for 4 seconds for the server and client to start
-	time.Sleep(4 * time.Second)
+	// wait for n seconds for the server and client to start
+	time.Sleep(serverSpinupTime)
 
 	// open a tcp connection to the client target address
 	conn, err := net.Dial("tcp", clientTargetAddr)
@@ -348,19 +350,17 @@ func TestTCPServerListener(t *testing.T) {
 
 		fmt.Printf("Listening for TCP connections on %s\n", clientTargetAddr)
 
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				fmt.Printf("Error accepting connection: %v\n", err)
-				continue
-			}
-
-			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Printf("Error accepting connection: %v\n", err)
+			os.Exit(1)
 		}
+
+		go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
 	}()
 
-	// wait for 1 seconds for the server and client to start
-	time.Sleep(1 * time.Second)
+	// wait for n seconds for the server and client to start
+	time.Sleep(serverSpinupTime)
 
 	// open a tcp connection to the client target address
 	conn, err := net.Dial("tcp", clientTargetAddr)
@@ -393,65 +393,97 @@ func TestHTTPServerListener(t *testing.T) {
 	bearerToken := ""
 	targetID := "hello"
 
-	// create the server with no forward targets
-	s, _ := NewWhetServer(bearerToken, nil, nil, nil, true)
-	s.StartWithAddress(whetHandlerAddr, false)
+	attempts := 5
 
-	// add a target to the server for a listener
-	listener, err := s.AddListener(targetID)
-	if err != nil {
-		t.Fatalf("Error adding listener: %v", err)
-	}
-	t.Logf("Added listener %v", listener)
-	http.HandleFunc("/", helloWorldHTTPHandler)
+	for i := 0; i < attempts; i++ {
+		fmt.Printf("Attempt %d\n", i+1)
 
-	// start the http server with the listener on the server side
-	// http.server will receive whet connections instead of normal tcp connections
-	go func() {
-		http.Serve(listener, nil)
-	}()
+		// create the server with no forward targets
+		s, _ := NewWhetServer(bearerToken, nil, nil, nil, true)
+		s.StartWithAddress(whetHandlerAddr, false)
 
-	// start the client socket listener on the client side
-	// this will forward the connection to the server side
-	go func() {
-		listener, err := net.Listen("tcp", clientTargetAddr)
+		// add a target to the server for a listener
+		listener, err := s.AddListener(targetID)
 		if err != nil {
-			panic(err)
+			t.Fatalf("Error adding listener: %v", err)
 		}
-		defer listener.Close()
+		t.Logf("Added listener %v", listener)
+		// create a ServeMux and add the handler
+		mux := http.NewServeMux()
 
-		fmt.Printf("Listening for TCP connections on %s\n", clientTargetAddr)
+		// Add handlers to the custom mux instead of using http.HandleFunc
+		mux.HandleFunc("/", helloWorldHTTPHandler)
 
-		for {
-			conn, err := listener.Accept()
+		// start the http server with the listener on the server side
+		// http.server will receive whet connections instead of normal tcp connections
+		server := &http.Server{
+			Addr:    ":8080", // or your desired address
+			Handler: mux,
+			// You can also configure other server options here like:
+			// ReadTimeout:  15 * time.Second,
+			// WriteTimeout: 15 * time.Second,
+			// IdleTimeout: 60 * time.Second,
+		}
+
+		go func() {
+			server.Serve(listener)
+			t.Log("HTTP Server stopped")
+		}()
+
+		// start the client socket listener on the client side
+		// this will forward the connection to the server side
+		var clistener net.Listener
+		go func() {
+			clistener, err = net.Listen("tcp", clientTargetAddr)
+			if err != nil {
+				panic(err)
+			}
+
+			fmt.Printf("Listening for TCP connections on %s\n", clientTargetAddr)
+
+			conn, err := clistener.Accept()
 			if err != nil {
 				fmt.Printf("Error accepting connection: %v\n", err)
-				continue
+				os.Exit(1)
 			}
 
 			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+		}()
+
+		// wait for n seconds for the server and client to start
+		time.Sleep(serverSpinupTime)
+
+		resp, err := http.Get("http://" + clientTargetAddr)
+		if err != nil {
+			t.Errorf("HTTP GET failed: %v", err)
+			return
 		}
-	}()
 
-	// wait for 1 seconds for the server and client to start
-	time.Sleep(1 * time.Second)
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Errorf("Failed to read response body: %v", err)
+			return
+		}
+		resp.Body.Close()
 
-	resp, err := http.Get("http://" + clientTargetAddr)
-	if err != nil {
-		t.Errorf("HTTP GET failed: %v", err)
-		return
-	}
+		// listener.Close()
 
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Errorf("Failed to read response body: %v", err)
-		return
-	}
-	resp.Body.Close()
+		// close the client listener
+		clistener.Close()
 
-	if string(bodyBytes) != "Hello World" {
-		t.Errorf("Expected 'Hello World', got '%s'", bodyBytes)
-	} else {
-		fmt.Println("Test passed: Got expected response")
+		// Create a deadline for shutdown
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		// Gracefully shutdown the server
+		if err := server.Shutdown(ctx); err != nil {
+			// Handle shutdown error
+		}
+
+		if string(bodyBytes) != "Hello World" {
+			t.Errorf("Expected 'Hello World', got '%s'", bodyBytes)
+		} else {
+			fmt.Println("Test passed: Got expected response")
+		}
 	}
 }

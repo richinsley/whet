@@ -15,6 +15,7 @@ func handleHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup) error 
 }
 
 func handleDetachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup) error {
+	// make a buffer to read the ready message, it should be large enough to prevent the 'short buffer' error
 	readybuf := make([]byte, 12)
 
 	if isServer {

@@ -27,6 +27,8 @@ go.work.sum
 .vscode/
 whet
 whap
+libwhap.a
+libwhap.h
 
 # workspace files
 cmd/__debug*

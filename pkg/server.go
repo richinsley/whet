@@ -28,6 +28,7 @@ type ProxyTarget struct {
 type WhetServer struct {
 	mut          *sync.Mutex
 	Mux          *http.ServeMux
+	Http         *http.Server
 	Targets      map[string]*ForwardTargetPort
 	ServeFolders []string
 	ProxyTargets []ProxyTarget
@@ -101,13 +102,20 @@ func (ws *WhetServer) configureSignalServer() error {
 func (ws *WhetServer) StartWithListener(listener net.Listener, block bool) error {
 	ws.Addr = listener.Addr().String()
 	if block {
-		return http.Serve(listener, ws.Mux)
+		ws.Http = &http.Server{
+			Handler: ws.Mux,
+		}
+		return ws.Http.Serve(listener)
+		// return http.Serve(listener, ws.Mux)
 	} else {
 		// we'll use a channel to catch any errors that occur when starting the server
 		errChan := make(chan error, 1)
 
 		go func() {
 			// Start the server and send any error to the channel
+			ws.Http = &http.Server{
+				Handler: ws.Mux,
+			}
 			if err := http.Serve(listener, ws.Mux); err != nil {
 				errChan <- err
 			}
@@ -123,17 +131,35 @@ func (ws *WhetServer) StartWithListener(listener net.Listener, block bool) error
 	}
 }
 
+func (ws *WhetServer) Close() error {
+	// close all the listeners
+	for _, listener := range ws.Listeners {
+		close(listener.ConnsChan)
+	}
+
+	return nil
+}
+
 func (ws *WhetServer) StartWithAddress(serverAddr string, block bool) error {
 	ws.Addr = serverAddr
 	if block {
-		return http.ListenAndServe(serverAddr, ws.Mux)
+		ws.Http = &http.Server{
+			Addr:    serverAddr,
+			Handler: ws.Mux,
+		}
+		return ws.Http.ListenAndServe()
 	} else {
 		// we'll use a channel to catch any errors that occur when starting the server
 		errChan := make(chan error, 1)
 
 		go func() {
 			// Start the server and send any error to the channel
-			if err := http.ListenAndServe(serverAddr, ws.Mux); err != nil {
+			ws.Http = &http.Server{
+				Addr:    serverAddr,
+				Handler: ws.Mux,
+			}
+
+			if err := ws.Http.ListenAndServe(); err != nil {
 				errChan <- err
 			}
 		}()
