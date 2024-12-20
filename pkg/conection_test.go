@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"math/rand"
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-var serverSpinupTime = 2 * time.Second
+var serverSpinupTime = 1 * time.Second
 
 func simpleMirrorServer(address string, t *testing.T) {
 	listener, err := net.Listen("tcp", address)
@@ -74,7 +73,7 @@ func simpleMirrorServer(address string, t *testing.T) {
 	fmt.Println("Simple server sent data back to client")
 }
 
-// TestServerClient create a server that port forwards 9999 and listen for whet handler on 8088
+// TestServerClient create a server that port forwards 9999 and listens for whet handler on 8088
 // create a client that establishes a port forward to 10000
 func TestServerClient(t *testing.T) {
 	whetHandlerAddr := "127.0.0.1:8088"
@@ -178,6 +177,9 @@ func TestServerClient(t *testing.T) {
 		totalRead += n
 		fmt.Printf("Client Read %d bytes of %d\n", totalRead, bufferSize)
 	}
+
+	// close the connection
+	conn.Close()
 
 	// ensure we read the correct number of bytes
 	if totalRead != bufferSize {
@@ -286,6 +288,9 @@ func TestServerClientConn(t *testing.T) {
 		fmt.Printf("Client Read %d bytes of %d\n", totalRead, bufferSize)
 	}
 
+	// close the connection
+	conn.Close()
+
 	// ensure we read the correct number of bytes
 	if totalRead != bufferSize {
 		t.Fatalf("Expected to read %d bytes, read %d", bufferSize, totalRead)
@@ -297,8 +302,6 @@ func TestServerClientConn(t *testing.T) {
 			t.Fatalf("Buffers do not match at index %d", i)
 		}
 	}
-
-	conn.Close()
 
 	t.Log("Buffers match")
 }
@@ -323,6 +326,7 @@ func TestTCPServerListener(t *testing.T) {
 	// create the server with no forward targets
 	s, _ := NewWhetServer(bearerToken, nil, nil, nil, true)
 	s.StartWithAddress(whetHandlerAddr, false)
+	defer s.Close()
 
 	// add a target to the server for a listener
 	listener, err := s.AddListener(targetID)
@@ -387,7 +391,20 @@ func TestTCPServerListener(t *testing.T) {
 }
 
 func TestHTTPServerListener(t *testing.T) {
-	// create a whet server
+	// * create a whet server
+	// * add a listener target to the whet server
+	// * create an http mux router
+	// * add a default "/" handler to the mux router that writes "Hello World" to the response
+	// * start the http server with the listener on the server side
+	// 		* this will receive whet connections instead of normal tcp connections
+	// * start the client TCP socket listener on the client side that forwards the connection to the whet server
+	// * create a custom http client with timeouts
+	// * make an http GET request to the client target address
+	//		* the client tcp listener will forward the connection to the server side and be handled by the http server via whet
+	// * read the response body and compare it to the expected response
+	// * close the whet server and the http server
+	// * wash, rinse, repeat n times
+
 	whetHandlerAddr := "127.0.0.1:8089"
 	clientTargetAddr := "127.0.0.1:10000"
 	bearerToken := ""
@@ -400,6 +417,8 @@ func TestHTTPServerListener(t *testing.T) {
 
 		// create the server with no forward targets
 		s, _ := NewWhetServer(bearerToken, nil, nil, nil, true)
+		s.Id = fmt.Sprintf("server-%d", i)
+
 		s.StartWithAddress(whetHandlerAddr, false)
 
 		// add a target to the server for a listener
@@ -446,14 +465,33 @@ func TestHTTPServerListener(t *testing.T) {
 				fmt.Printf("Error accepting connection: %v\n", err)
 				os.Exit(1)
 			}
+			// we got our one connection, close the listener
+			clistener.Close()
 
-			go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+			HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
+			conn.Close()
+			fmt.Println("Client connection closed")
 		}()
 
 		// wait for n seconds for the server and client to start
 		time.Sleep(serverSpinupTime)
 
-		resp, err := http.Get("http://" + clientTargetAddr)
+		// Create a custom HTTP client with timeouts
+		client := &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout:   5 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          100,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   5 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		}
+
+		resp, err := client.Get("http://" + clientTargetAddr)
 		if err != nil {
 			t.Errorf("HTTP GET failed: %v", err)
 			return
@@ -466,19 +504,20 @@ func TestHTTPServerListener(t *testing.T) {
 		}
 		resp.Body.Close()
 
-		// listener.Close()
+		// // Create a deadline for shutdown
+		// ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		// defer cancel()
 
-		// close the client listener
-		clistener.Close()
+		// // Gracefully shutdown the HTTP server, this will close the listeners
+		// if err := server.Shutdown(ctx); err != nil {
+		// 	// Handle shutdown error
+		// 	t.Errorf("Failed to shutdown HTTP server: %v", err)
+		// }
 
-		// Create a deadline for shutdown
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
+		server.Close()
 
-		// Gracefully shutdown the server
-		if err := server.Shutdown(ctx); err != nil {
-			// Handle shutdown error
-		}
+		// close the whet server
+		s.Close()
 
 		if string(bodyBytes) != "Hello World" {
 			t.Errorf("Expected 'Hello World', got '%s'", bodyBytes)

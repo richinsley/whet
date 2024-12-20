@@ -189,13 +189,6 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 	// Get the connection ID from the resource URL
 	connectionID := resourceUrl.Path[strings.LastIndex(resourceUrl.Path, "/")+1:]
 
-	// // Get the connection ID
-	// connectionID := resp.Header.Get("Connection-ID")
-	// if connectionID == "" {
-	// 	fmt.Println("Connection-ID not found in response")
-	// 	return
-	// }
-
 	answer := webrtc.SessionDescription{
 		Type: webrtc.SDPTypeAnswer,
 		SDP:  string(body),

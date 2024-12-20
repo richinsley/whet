@@ -36,11 +36,13 @@ type WhetServer struct {
 	BearerToken  string
 	Addr         string
 	Listeners    map[string]*WhetListener
+	Id           string
 }
 
 type WhetListener struct {
 	Server    *WhetServer
 	ConnsChan chan net.Conn
+	isopen    bool
 }
 
 func (ws *WhetServer) configureSignalServer() error {
@@ -134,8 +136,11 @@ func (ws *WhetServer) StartWithListener(listener net.Listener, block bool) error
 func (ws *WhetServer) Close() error {
 	// close all the listeners
 	for _, listener := range ws.Listeners {
-		close(listener.ConnsChan)
+		listener.Close()
 	}
+
+	// close the Http server
+	ws.Http.Close()
 
 	return nil
 }
@@ -389,7 +394,12 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 					// we need to create a WebRTCConn
 					listernconn, _ := ListenerWebRTCConn(c)
 					wl := ws.Listeners[parts[0]]
-					wl.ConnsChan <- listernconn
+					if wl != nil {
+						wl.ConnsChan <- listernconn
+					} else {
+						http.Error(w, "Listener not found", http.StatusBadRequest)
+						fmt.Println("Listener not found")
+					}
 				}
 			})
 
@@ -550,12 +560,8 @@ func (ws *WhetServer) AddListener(targetid string) (*WhetListener, error) {
 	retv := &WhetListener{
 		Server:    ws,
 		ConnsChan: make(chan net.Conn),
+		isopen:    true,
 	}
-
-	// // Add the handler to the mux
-	// ws.Mux.HandleFunc("/whet/"+targetid, func(w http.ResponseWriter, r *http.Request) {
-	// 	ws.WhetHandler(w, r)
-	// })
 
 	forwarder := &ForwardTargetPort{
 		TargetName:        targetid,
@@ -577,11 +583,19 @@ func (ws *WhetServer) AddListener(targetid string) (*WhetListener, error) {
 // Accept waits for and returns the next connection to the listener.
 func (wl *WhetListener) Accept() (net.Conn, error) {
 	retv := <-wl.ConnsChan
+	if retv == nil {
+		return nil, fmt.Errorf("listener closed")
+	}
 	return retv, nil
 }
 
 // Close closes the listener.
 func (wl *WhetListener) Close() error {
+	// close the channel so accept will return an error and the listener will be closed
+	if wl.isopen {
+		close(wl.ConnsChan)
+		wl.isopen = false
+	}
 	return nil
 }
 
