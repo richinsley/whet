@@ -25,30 +25,9 @@ func handleAttachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup
 }
 
 func handleDetachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup) error {
-	// // make a buffer to read the ready message, it should be large enough to prevent the 'short buffer' error
-	// readybuf := make([]byte, 12)
-
 	ctx := context.Background()
 
 	if isServer {
-		// // SERVER_READY should have been sent by the server immediately after the data channel opens
-		// // We just need to ensure the first message from the client must be the CLIENT_READY message
-		// n, err := conn.rawDetached.Read(readybuf)
-		// if err != nil {
-		// 	if conn.conn != nil {
-		// 		conn.conn.Close()
-		// 	}
-		// 	conn.closed = true
-		// 	return fmt.Errorf("error reading from rawDetached: %v", err)
-		// }
-
-		// if n != 12 || !bytes.Equal(readybuf, []byte("CLIENT_READY")) {
-		// 	if conn.conn != nil {
-		// 		conn.conn.Close()
-		// 	}
-		// 	conn.closed = true
-		// 	return fmt.Errorf("handshake failed, closing connection")
-		// }
 		fmt.Println("Server waiting for client ready signal")
 		err := conn.performServerHandshake(ctx)
 		if err != nil {
@@ -60,17 +39,6 @@ func handleDetachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup
 		}
 		fmt.Println("Server received client ready signal")
 	} else {
-		// // Client waits for SERVER_READY
-		// n, err := conn.ReceiveRaw(readybuf)
-		// if err != nil || n != 12 || !bytes.Equal(readybuf, []byte("SERVER_READY")) {
-		// 	return fmt.Errorf("handshake failed")
-		// }
-
-		// // Send CLIENT_READY
-		// if err := conn.SendRaw([]byte("CLIENT_READY")); err != nil {
-		// 	return err
-		// }
-
 		fmt.Println("Client waiting for server ready signal")
 		err := conn.performClientHandshake(ctx)
 		if err != nil {
@@ -90,8 +58,6 @@ func handleDetachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup
 	return nil
 }
 
-/* --------- */
-
 func (c *Connection) sendReadySignal() error {
 	if c.detached {
 		return c.SendRaw([]byte(ReadyMessage))
@@ -102,7 +68,7 @@ func (c *Connection) sendReadySignal() error {
 
 func (c *Connection) performClientHandshake(ctx context.Context) error {
 	// Wait for peer's ready signal
-	if err := c.waitForPeerReady(ctx); err != nil {
+	if err := c.waitForPeerReady(false, ctx); err != nil {
 		return fmt.Errorf("peer handshake failed: %w", err)
 	}
 
@@ -121,28 +87,14 @@ func (c *Connection) performServerHandshake(ctx context.Context) error {
 	}
 
 	// Wait for peer's ready signal
-	if err := c.waitForPeerReady(ctx); err != nil {
+	if err := c.waitForPeerReady(true, ctx); err != nil {
 		return fmt.Errorf("peer handshake failed: %w", err)
 	}
 
 	return nil
 }
 
-func (c *Connection) performHandshake(ctx context.Context) error {
-	// Signal our ready state
-	if err := c.sendReadySignal(); err != nil {
-		return fmt.Errorf("failed to send ready signal: %w", err)
-	}
-
-	// Wait for peer's ready signal
-	if err := c.waitForPeerReady(ctx); err != nil {
-		return fmt.Errorf("peer handshake failed: %w", err)
-	}
-
-	return nil
-}
-
-func (c *Connection) waitForPeerReady(ctx context.Context) error {
+func (c *Connection) waitForPeerReady(servermode bool, ctx context.Context) error {
 	readyCh := make(chan struct{})
 	errCh := make(chan error, 1)
 
@@ -155,12 +107,14 @@ func (c *Connection) waitForPeerReady(ctx context.Context) error {
 		}
 
 		if n != len(ReadyMessage) || !bytes.Equal(buffer[:n], []byte(ReadyMessage)) {
-			errCh <- fmt.Errorf("invalid handshake message")
+			mode := "client"
+			if servermode {
+				mode = "server"
+			}
+			errCh <- fmt.Errorf("invalid handshake message %s mode", mode)
 			return
 		}
 
-		// c.remoteReady.Store(true)
-		// c.readyWg.Done()
 		close(readyCh)
 	}()
 

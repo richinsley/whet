@@ -382,14 +382,8 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 						}()
 					}
 				} else if target.ForwardTargetType == ForwardTargetTypeListener {
-					// // Send SERVER_READY as soon as the channel opens,  The handshake is completed in the proxy goroutine above
-					// if c.rawDetached != nil {
-					// 	_, err := c.rawDetached.Write([]byte("SERVER_READY"))
-					// 	if err != nil {
-					// 		fmt.Printf("Error sending SERVER_READY: %v\n", err)
-					// 	}
-					// }
-					// wg.Done()
+					// wait for the handshake that is managed in the above proxy goroutine
+					wg.Wait()
 
 					// we need to create a WebRTCConn
 					listernconn, _ := ListenerWebRTCConn(c)
