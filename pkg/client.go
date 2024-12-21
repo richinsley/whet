@@ -245,7 +245,9 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 	// Proxy data from TCP to WebRTC
 	go func() {
 		// Wait for data channel to open and the handshake to complete before sending data
+		fmt.Println("Waiting for client side handshake to complete")
 		wg.Wait()
+		fmt.Println("Client side handshake complete, starting to proxy data")
 
 		bufferSize := maxBufferSize
 		buffer := make([]byte, bufferSize)
@@ -255,6 +257,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 				fmt.Println("Connection closed by client")
 				err = io.EOF
 			}
+			fmt.Printf("Read %d bytes from client side TCP connection\n", n)
 			if err != nil {
 				if err != io.EOF {
 					fmt.Printf("Error reading from TCP connection: %v\n", err)

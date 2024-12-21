@@ -73,8 +73,8 @@ func simpleMirrorServer(address string, t *testing.T) {
 	fmt.Println("Simple server sent data back to client")
 }
 
-// TestServerClient create a server that port forwards 9999 and listens for whet handler on 8088
-// create a client that establishes a port forward to 10000
+// TestServerClient creates a simple mirror server that listens on 9999 and listens for whet handler on 8088
+// create a whet client that establishes a port forward from 10000 to the simple mirror server on 9999
 func TestServerClient(t *testing.T) {
 	whetHandlerAddr := "127.0.0.1:8088"
 	serverTargetAddr := "127.0.0.1:9999"
@@ -98,11 +98,14 @@ func TestServerClient(t *testing.T) {
 		},
 	}
 
-	// create the server
+	// create the whet server with the forward targets
+	// we're specifying the targetID (remoterange) targets port 9999 (the mirror server)
+	// when the client connects to 10000, it will be forwarded to the mirror server at 9999
 	s, _ := NewWhetServer(bearerToken, targets, nil, nil, true)
 	s.StartWithAddress(whetHandlerAddr, false)
 
 	go func() {
+		// listen on port 10000 for the client connection
 		listener, err := net.Listen("tcp", clientTargetAddr)
 		if err != nil {
 			panic(err)
@@ -117,6 +120,7 @@ func TestServerClient(t *testing.T) {
 			os.Exit(1)
 		}
 
+		fmt.Println("Accepted connection")
 		go HandleClientConnection(conn, whetHandlerAddr, targetID, bearerToken, true)
 	}()
 
@@ -136,6 +140,7 @@ func TestServerClient(t *testing.T) {
 	}
 
 	// write the length of the buffer to the connection
+	fmt.Println("Writing buffer length")
 	lengthBuffer := make([]byte, 4)
 	lengthBuffer[0] = byte(bufferSize & 0xFF)
 	lengthBuffer[1] = byte((bufferSize >> 8) & 0xFF)
@@ -147,12 +152,14 @@ func TestServerClient(t *testing.T) {
 	}
 
 	// write the buffer to the connection
+	fmt.Printf("Writing buffer of size %d\n", bufferSize)
 	_, err = conn.Write(buffer)
 	if err != nil {
 		t.Fatalf("Error writing buffer: %v", err)
 	}
 
 	// read the 4 bytes that represent the length of the data
+	fmt.Println("Reading buffer length")
 	_, err = conn.Read(lengthBuffer)
 	if err != nil {
 		t.Fatalf("Error reading length: %v", err)
@@ -196,7 +203,7 @@ func TestServerClient(t *testing.T) {
 	t.Log("Buffers match")
 }
 
-// TestServerClientConn creates a server that port forwards 9999 and listen for whet handler on 8088
+// TestServerClientConn creates a mirror server that port forwards 9999 and listen for whet handler on 8088
 // create a client that establishes a port forward to 10000
 func TestServerClientConn(t *testing.T) {
 	whetHandlerAddr := "127.0.0.1:8089"
@@ -290,6 +297,7 @@ func TestServerClientConn(t *testing.T) {
 
 	// close the connection
 	conn.Close()
+	fmt.Println("Client connection closed")
 
 	// ensure we read the correct number of bytes
 	if totalRead != bufferSize {

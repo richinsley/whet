@@ -19,6 +19,8 @@ const (
 	maxBufferSize int = 16 * 1024
 )
 
+const ReadyMessage = "READY_TO_TRANSMIT"
+
 var OpenConnections = make(map[string]*Connection)
 var connectionsLock sync.Mutex
 

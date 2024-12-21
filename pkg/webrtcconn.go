@@ -94,8 +94,23 @@ func (c *WebRTCConn) Close() error {
 		c.closed = true
 
 		// wait for the data channel to drain before closing the connection
-		for c.connection.DataChannel().BufferedAmount() > 0 {
-			time.Sleep(10 * time.Millisecond)
+		// this is necessary because the data channel is buffered and we may have
+		// data that has not been read yet.  We don't want to wait forever, so we
+		// give up after 1 second.  Sometimes the data channel BufferedAmount does
+		// not always decrease (invalid tracking?).
+		lcount := 0
+		for {
+			bamount := c.connection.DataChannel().BufferedAmount()
+			if bamount > 0 {
+				time.Sleep(10 * time.Millisecond)
+				lcount++
+				if lcount > 100 {
+					fmt.Println("Close - Buffered amount not decreasing, closing connection")
+					break
+				}
+				continue
+			}
+			break
 		}
 
 		// close the ice connection

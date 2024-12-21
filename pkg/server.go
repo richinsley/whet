@@ -298,7 +298,11 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(2)
+		wg.Add(1)
+
+		// wait group that is signaled when the net.conn is attached to the Connection
+		var connWg sync.WaitGroup
+		connWg.Add(1)
 
 		// we only support the single port forwading for now, so we'll generate a new random UUID for each request
 		distroUUID := uuid.New()
@@ -315,6 +319,7 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				c.rawDetached = rawDetached
 
+				// handle the handshake and tcp proxying in a separate goroutine
 				go func() {
 					// Handshake
 					err := handleHandshake(c, true, &wg)
@@ -324,21 +329,22 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 							c.conn.Close()
 						}
 						c.closed = true
-						return
 					}
 
+					connWg.Wait()
 					if c.conn != nil {
 						// we have a TCP connection, read from the data channel and write to the TCP connection
 						// until the data channel is closed
 						defer c.conn.Close()
 						buffer := make([]byte, maxBufferSize)
+						fmt.Println("Server side data channel opened - receiving data")
 						for {
 							n, err := c.ReceiveRaw(buffer)
 							if n == 0 || err != nil {
 								fmt.Println("Connection closed by client")
 								break
 							}
-
+							fmt.Printf("Read %d bytes from server side data channel\n", n)
 							// write all the data to the TCP connection
 							err = c.SendData(buffer[:n])
 							if err != nil {
@@ -366,30 +372,24 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 
 						return
 					} else {
-						// Send SERVER_READY as soon as the channel opens,  The handshake is completed in the proxy goroutine above
-						// by checking the first message from the client
+						// we have a connection, store it in the connection object and signal the wait group
+						// so the tcp proxying can start
 						c.conn = conn
-						if c.rawDetached != nil {
-							_, err := c.rawDetached.Write([]byte("SERVER_READY"))
-							if err != nil {
-								fmt.Printf("Error sending SERVER_READY: %v\n", err)
-							}
-						}
-						wg.Done()
+						connWg.Done()
 
 						go func() {
 							createServerSideConnection(peerConnection, dataChannel, &wg, c)
 						}()
 					}
 				} else if target.ForwardTargetType == ForwardTargetTypeListener {
-					// Send SERVER_READY as soon as the channel opens,  The handshake is completed in the proxy goroutine above
-					if c.rawDetached != nil {
-						_, err := c.rawDetached.Write([]byte("SERVER_READY"))
-						if err != nil {
-							fmt.Printf("Error sending SERVER_READY: %v\n", err)
-						}
-					}
-					wg.Done()
+					// // Send SERVER_READY as soon as the channel opens,  The handshake is completed in the proxy goroutine above
+					// if c.rawDetached != nil {
+					// 	_, err := c.rawDetached.Write([]byte("SERVER_READY"))
+					// 	if err != nil {
+					// 		fmt.Printf("Error sending SERVER_READY: %v\n", err)
+					// 	}
+					// }
+					// wg.Done()
 
 					// we need to create a WebRTCConn
 					listernconn, _ := ListenerWebRTCConn(c)
@@ -508,6 +508,7 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 			fmt.Println("Connection closed by client")
 			err = io.EOF
 		}
+		fmt.Printf("Read %d bytes from server side net.conn\n", n)
 		if err != nil {
 			if err != io.EOF {
 				fmt.Printf("Error reading from target connection: %v\n", err)
