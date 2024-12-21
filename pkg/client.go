@@ -257,7 +257,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 				fmt.Println("Connection closed by client")
 				err = io.EOF
 			}
-			fmt.Printf("Read %d bytes from client side TCP connection\n", n)
+
 			if err != nil {
 				if err != io.EOF {
 					fmt.Printf("Error reading from TCP connection: %v\n", err)

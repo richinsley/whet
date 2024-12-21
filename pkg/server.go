@@ -344,7 +344,7 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 								fmt.Println("Connection closed by client")
 								break
 							}
-							fmt.Printf("Read %d bytes from server side data channel\n", n)
+
 							// write all the data to the TCP connection
 							err = c.SendData(buffer[:n])
 							if err != nil {
@@ -502,7 +502,7 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 			fmt.Println("Connection closed by client")
 			err = io.EOF
 		}
-		fmt.Printf("Read %d bytes from server side net.conn\n", n)
+
 		if err != nil {
 			if err != io.EOF {
 				fmt.Printf("Error reading from target connection: %v\n", err)
