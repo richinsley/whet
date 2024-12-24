@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -128,13 +127,7 @@ func (c *WebRTCConn) Close() error {
 				req.Header.Add("Authorization", "Bearer "+bearerToken)
 			}
 
-			client := &http.Client{
-				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{
-						InsecureSkipVerify: true,
-					},
-				},
-			}
+			client := getHttpClient()
 			_, err = client.Do(req)
 			if err != nil {
 				return fmt.Errorf("failed http DELETE request: %s", err)

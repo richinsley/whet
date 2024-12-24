@@ -176,7 +176,7 @@ func runServerNGROK(ctx context.Context, targets map[string]*pkg.ForwardTargetPo
 
 	options := make([]config.HTTPEndpointOption, 0)
 	if domain != "" {
-		options = append(options, config.WithDomain(domain))
+		options = append(options, config.WithDomain(domain), config.WithScheme("https"))
 	}
 	conf = config.HTTPEndpoint(options...)
 

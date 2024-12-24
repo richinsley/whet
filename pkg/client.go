@@ -138,17 +138,12 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 	}
 
 	// post the request to the whet server
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
+	client := getHttpClient()
 
-	fmt.Printf("WHET client using endpoint%s\n", signalServer)
+	fmt.Printf("Making request to signal server URL: %s\n", signalServer)
 	req, err := http.NewRequest("POST", signalServer, bytes.NewBuffer([]byte(offerString)))
 	if err != nil {
+		fmt.Printf("Error creating request: %v\n", err)
 		return
 	}
 
@@ -159,6 +154,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 
 	resp, err := client.Do(req)
 	if err != nil {
+		fmt.Printf("Error making request: %v\n", err)
 		fmt.Println(err.Error())
 		return
 	}
@@ -282,13 +278,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 						req.Header.Add("Authorization", "Bearer "+bearerToken)
 					}
 
-					client := &http.Client{
-						Transport: &http.Transport{
-							TLSClientConfig: &tls.Config{
-								InsecureSkipVerify: true,
-							},
-						},
-					}
+					client := getHttpClient()
 					_, err = client.Do(req)
 					if err != nil {
 						fmt.Printf("Failed http DELETE request: %s\n", err)
@@ -323,6 +313,21 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 
 	<-done
 	fmt.Println("Connection closed")
+}
+
+func getHttpClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS13,
+			},
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return nil
+		},
+	}
 }
 
 func DialClientConnection(signalServer string, targetName string, bearerToken string) (*Connection, error) {
@@ -412,13 +417,7 @@ func DialClientConnection(signalServer string, targetName string, bearerToken st
 	}
 
 	// post the request to the whet server
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
+	client := getHttpClient()
 
 	fmt.Printf("WHET client using endpoint%s\n", signalServer)
 	req, err := http.NewRequest("POST", signalServer, bytes.NewBuffer([]byte(offerString)))
