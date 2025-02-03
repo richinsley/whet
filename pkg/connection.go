@@ -3,6 +3,7 @@ package pkg
 import (
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"sync"
@@ -91,20 +92,44 @@ func (c *Connection) Closed() bool {
 	return c.closed
 }
 
-// SendRaw sends data over the data channel and blocks until all data has been sent.
-func (c *Connection) SendRaw(data []byte) error {
-	if !c.detached {
-		return errors.New("cannot send raw data on non-detached connection")
+// SendRawDataChannel sends data over the data channel and blocks until all data has been sent.
+func (c *Connection) SendRawDataChannel(data []byte) error {
+	// if !c.detached {
+	// 	return errors.New("cannot send raw data on non-detached connection")
+	// }
+
+	if len(data) == 0 {
+		// write nothing
+		if c.detached {
+			_, err := c.rawDetached.Write(data)
+			if err != nil {
+				return err
+			}
+		} else {
+			err := c.dataChannel.Send(data)
+			if err != nil {
+				return err
+			}
+		}
 	}
+
 	sentData := 0
 	// we can only write up to MaxBufferedAmount bytes to the data channel at a time
 	for sentData < len(data) {
 		maxwrite := int(math.Min(float64(len(data)-sentData), float64(maxBufferSize)))
-		n, err := c.rawDetached.Write(data[sentData : sentData+maxwrite])
-		if err != nil {
-			return err
+		if c.detached {
+			n, err := c.rawDetached.Write(data[sentData : sentData+maxwrite])
+			if err != nil {
+				return err
+			}
+			sentData += n
+		} else {
+			err := c.dataChannel.Send(data[sentData : sentData+maxwrite])
+			if err != nil {
+				return err
+			}
+			sentData += maxwrite
 		}
-		sentData += n
 
 		// check if we can send more
 		if c.dataChannel.BufferedAmount() > MaxBufferedAmount {
@@ -116,8 +141,8 @@ func (c *Connection) SendRaw(data []byte) error {
 	return nil
 }
 
-// SendData sends data over the TCP connection until all data has been sent or an error occurs.
-func (c *Connection) SendData(data []byte) error {
+// SendDataTCP sends data over the TCP connection until all data has been sent or an error occurs.
+func (c *Connection) SendDataTCP(data []byte) error {
 	sentData := 0
 	for sentData < len(data) {
 		n, err := c.conn.Write(data[sentData:])
@@ -134,7 +159,14 @@ func (c *Connection) ReceiveRaw(data []byte) (int, error) {
 	if !c.detached {
 		return 0, errors.New("cannot receive raw data on non-detached connection")
 	}
-	return c.rawDetached.Read(data)
+	r, err := c.rawDetached.Read(data)
+	if err != nil {
+		if err.Error() == "EOF" || err.Error() == "sending reset packet in non-established state: state=Closed" {
+			return 0, io.EOF
+		}
+		return r, io.EOF
+	}
+	return r, nil
 }
 
 // setupWebRTCConnection creates a new WebRTC API and PeerConnection with the given settings.
@@ -151,7 +183,7 @@ func setupWebRTCConnection(detached bool) (*webrtc.API, *webrtc.PeerConnection, 
 	peerConnectionConfig := DefaultPeerConnectionConfig()
 	peerConnection, err := api.NewPeerConnection(peerConnectionConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create peer connection: %v", err)
+		return nil, nil, fmt.Errorf("setupWebRTCConnection failed to create peer connection: %v", err)
 	}
 
 	return api, peerConnection, nil

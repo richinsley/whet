@@ -22,8 +22,8 @@ type WebRTCConn struct {
 	maxBufferSize int
 }
 
-func DialWebRTCConn(signalServer string, targetName string, bearerToken string) (*WebRTCConn, error) {
-	c, err := DialClientConnection(signalServer, targetName, bearerToken)
+func DialWebRTCConn(signalServer string, targetName string, bearerToken string, detached bool) (*WebRTCConn, error) {
+	c, err := DialClientConnection(signalServer, targetName, bearerToken, detached)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func (c *WebRTCConn) Read(b []byte) (n int, err error) {
 func (c *WebRTCConn) Write(b []byte) (n int, err error) {
 	c.writeMutex.Lock()
 	defer c.writeMutex.Unlock()
-	err = c.connection.SendRaw(b)
+	err = c.connection.SendRawDataChannel(b)
 
 	return len(b), err
 }

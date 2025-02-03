@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Whet Proxy</title>
+    <style>
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .status.error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        .status.success {
+            background-color: #e8f5e9;
+            color: #2e7d32;
+        }
+    </style>
+    <script src="wasm_exec.js"></script>
+    <script>
+        let connectionCounter = 0;
+        const activeConnections = new Map();
+
+        // Handle messages from service worker
+        navigator.serviceWorker.addEventListener('message', async (event) => {
+            if (event.data.type === 'tcp-connection') {
+                const connId = ++connectionCounter;
+                const port = event.data.port;
+                
+                try {
+                    // Create new Whet connection for this request
+
+                    const conn = await createWhetConnection(
+                        "127.0.0.1:8081",
+                        "whet/comfyui",
+                        ""
+                    );
+                    
+                    activeConnections.set(connId, conn);
+
+                    // Tell service worker we're ready
+                    port.postMessage({ type: 'connection-ready', connId });
+
+                    // Handle incoming data from service worker
+                    port.onmessage = async (msg) => {
+                        if (msg.data.type === 'data') {
+                            // write the chunk as a string
+                            const decoder = new TextDecoder();
+                            const d = decoder.decode(msg.data.chunk);
+                            console.log('Received data from service worker:', d);
+                            await conn.write(msg.data.chunk);
+                        } else if (msg.data.type === 'close') {
+                            await conn.close();
+                            activeConnections.delete(connId);
+                        }
+                    };
+
+                    // Start reading from Whet connection
+                    (async () => {
+                        try {
+                            while (true) {
+                                const data = await conn.read(16384);
+                                if (!data || data.length === 0) break;
+                                port.postMessage({ type: 'data', chunk: data });
+                            }
+                        } catch (err) {
+                            if (err !== 'EOF') {
+                                console.error('Error reading from Whet:', err);
+                            } else {
+                                console.log('Whet connection closed');
+                            }
+                        } finally {
+                            port.postMessage({ type: 'end' });
+                            await conn.close();
+                            activeConnections.delete(connId);
+                        }
+                    })();
+
+                } catch (err) {
+                    console.error('Error creating Whet connection:', err);
+                    port.postMessage({ type: 'error', error: err.message });
+                }
+            }
+        });
+
+        async function initProxy() {
+            try {
+                updateStatus('Initializing proxy...', 'info');
+                
+                console.log('Current location:', window.location.href);
+                console.log('Current service worker:', navigator.serviceWorker.controller);
+                
+                // Register service worker
+                updateStatus('Registering service worker...', 'info');
+                const registration = await navigator.serviceWorker.register('sw2.js', {
+                    scope: '/whet/'
+                });
+                console.log('Service worker registration successful:', registration);
+
+                // Wait for the service worker to be ready
+                updateStatus('Waiting for service worker to be ready...', 'info');
+                await new Promise((resolve, reject) => {
+                    if (registration.active) {
+                        console.log('Service worker already active');
+                        resolve();
+                        return;
+                    }
+
+                    const worker = registration.installing || registration.waiting;
+                    if (!worker) {
+                        reject(new Error('No installing or waiting service worker found'));
+                        return;
+                    }
+
+                    worker.addEventListener('statechange', (event) => {
+                        console.log('Service worker state:', event.target.state);
+                        if (event.target.state === 'activated') {
+                            console.log('Service worker activated');
+                            resolve();
+                        }
+                    });
+                });
+
+                console.log('Service worker is ready');
+                updateStatus('Loading WASM module...', 'info');
+                
+                const go = new Go();
+                const result = await WebAssembly.instantiateStreaming(
+                    fetch("whet.wasm"),
+                    go.importObject
+                );
+                go.run(result.instance);
+
+                updateStatus('Proxy initialized successfully!', 'success');
+                return true;
+            } catch (err) {
+                console.error('Initialization failed:', err);
+                updateStatus('Failed to initialize proxy: ' + err.message, 'error');
+                return false;
+            }
+        }
+
+
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + type;
+            console.log("updateStatus: " + message);
+        }
+
+        // Function to create a proxied iframe
+        function createProxiedIframe(targetUrl) {
+            const iframe = document.createElement('iframe');
+            // Use a URL that will be caught by the service worker
+            iframe.src = targetUrl;
+            iframe.style.width = '100%';
+            iframe.style.height = '600px';
+            iframe.style.border = 'none';
+            document.getElementById('iframe-container').appendChild(iframe);
+        }
+
+        window.onload = async function() {
+            const success = await initProxy();
+            if (success) {
+                createProxiedIframe('/whet/comfyui/index.html'); // must be a relative URL with /whet/ prefix for service worker to intercept
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Proxied Website</h1>
+    <div id="status" class="status"></div>
+    <div id="iframe-container"></div>
+</body>
+</html>

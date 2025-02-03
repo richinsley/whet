@@ -37,11 +37,11 @@ func cGoToSlice(cptr unsafe.Pointer, length int) []byte {
 }
 
 //export DialWhapConnection
-func DialWhapConnection(whetHandlerAddr *C.char, targetID *C.char, bearerToken *C.char) C.uint {
+func DialWhapConnection(whetHandlerAddr *C.char, targetID *C.char, bearerToken *C.char, detached bool) C.uint {
 	handler := C.GoString(whetHandlerAddr)
 	id := C.GoString(targetID)
 	token := C.GoString(bearerToken)
-	conn, err := pkg.DialWebRTCConn(handler, id, token)
+	conn, err := pkg.DialWebRTCConn(handler, id, token, detached)
 	if err != nil {
 		fmt.Printf("Error dialing connection: %v\n", err)
 		return 0

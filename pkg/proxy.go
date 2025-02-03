@@ -56,7 +56,7 @@ package pkg
 // 		// Send data over WebRTC
 // 		var sendErr error
 // 		if conn.detached {
-// 			sendErr = conn.SendRaw(buffer[:n])
+// 			sendErr = conn.SendRawDataChannel(buffer[:n])
 // 		} else {
 // 			sendErr = conn.dataChannel.Send(buffer[:n])
 // 		}

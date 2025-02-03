@@ -77,6 +77,7 @@ func main() {
 	btoken := flag.String("token", "", "Bearer token for authorization")
 	gtoken := flag.Bool("gentoken", false, "Generate a new bearer token")
 	detached := flag.Bool("detached", false, "Run in detached mode")
+	sserve := flag.String("mirror", "", "Simple mirror server address (for testing)")
 
 	var tcplisteners targetAddrList
 	flag.Var(&tcplisteners, "tcplisten", "Address to listen on for incoming TCP connections(can specify multiple)")
@@ -99,6 +100,10 @@ func main() {
 	}
 
 	flag.Parse()
+
+	if *sserve != "" {
+		go pkg.SimpleMirrorServer(*sserve)
+	}
 
 	if *isServer || *isNGROK {
 		// parse the forward target addresses

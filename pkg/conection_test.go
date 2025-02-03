@@ -232,7 +232,7 @@ func TestServerClientConn(t *testing.T) {
 	s.StartWithAddress(whetHandlerAddr, false)
 
 	// http://127.0.0.1:8089/whet/remoterange
-	conn, err := DialWebRTCConn(whetHandlerAddr, targetID, bearerToken)
+	conn, err := DialWebRTCConn(whetHandlerAddr, targetID, bearerToken, true)
 	if err != nil {
 		t.Fatalf("Error connecting to client target: %v", err)
 	}
@@ -285,10 +285,24 @@ func TestServerClientConn(t *testing.T) {
 	readBuffer := make([]byte, bufferSize)
 
 	// continue reading from the connection until we have read all the data
+	// totalRead := 0
+	// for totalRead < bufferSize {
+	// 	n, err := conn.Read(readBuffer[totalRead:])
+	// 	if err != nil {
+	// 		t.Fatalf("Error reading buffer: %v", err)
+	// 	}
+	// 	totalRead += n
+	// 	fmt.Printf("Client Read %d bytes of %d\n", totalRead, bufferSize)
+	// }
+
+	// continue reading from the connection until we have read all the data with an eof
 	totalRead := 0
-	for totalRead < bufferSize {
+	for {
 		n, err := conn.Read(readBuffer[totalRead:])
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			t.Fatalf("Error reading buffer: %v", err)
 		}
 		totalRead += n

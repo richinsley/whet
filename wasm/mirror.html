@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Whet WASM Test</title>
+</head>
+<body>
+    <h1>Whet WASM Test</h1>
+    <div id="status">Status: Initializing...</div>
+    <button id="testConnection">Test Connection</button>
+
+    <script src="wasm_exec.js"></script>
+    <script>
+        const statusDiv = document.getElementById('status');
+        const testButton = document.getElementById('testConnection');
+
+        // Initialize Go WASM
+        const go = new Go();
+        
+        // potentially use
+        WebAssembly.instantiateStreaming(fetch("whet.wasm"), go.importObject)
+            .then((result) => {
+                go.run(result.instance);
+                statusDiv.textContent = 'Status: WASM loaded';
+                testButton.disabled = false;
+            })
+            .catch((err) => {
+                statusDiv.textContent = 'Status: Failed to load WASM: ' + err;
+                console.error('Failed to load WASM:', err);
+            });
+
+            testButton.addEventListener('click', async () => {
+            try {
+                statusDiv.textContent = 'Status: Creating connection...';
+                
+                const conn = await createWhetConnection(
+                    "127.0.0.1:8081",
+                    "whet/mirror",
+                    ""  // bearerToken
+                );
+
+                statusDiv.textContent = 'Status: Connection established';
+
+                // // Test write (4 BYTES-LENGTH + 1, 2, 3, 4, 5)
+                const testData = new Uint8Array([5, 0, 0, 0, 1, 2, 3, 4, 5]);
+                const bytesWritten = await conn.write(testData);
+                console.log('Bytes written:', bytesWritten);
+
+                // Test read
+                console.log('Reading back our 5 bytes...');
+                const response = await conn.read(150);
+                console.log('Response:', response);
+
+                const second = await conn.read(15);
+                console.log('Bytes written:', second);
+
+                // Close connection
+                conn.close();
+                statusDiv.textContent = 'Status: Test completed';
+            } catch (err) {
+                statusDiv.textContent = 'Status: Error: ' + err;
+                console.error('Connection error:', err);
+            }
+        });
+    </script>
+</body>
+</html>

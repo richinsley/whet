@@ -35,3 +35,4 @@ cmd/__debug*
 scratch
 scratch.md
 Dockerfile
+wasm/whet.wasm

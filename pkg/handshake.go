@@ -60,7 +60,7 @@ func handleDetachedHandshake(conn *Connection, isServer bool, wg *sync.WaitGroup
 
 func (c *Connection) sendReadySignal() error {
 	if c.detached {
-		return c.SendRaw([]byte(ReadyMessage))
+		return c.SendRawDataChannel([]byte(ReadyMessage))
 	} else {
 		return c.dataChannel.Send([]byte(ReadyMessage))
 	}

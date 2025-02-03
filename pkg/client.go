@@ -31,7 +31,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 	// create a new WebRTC peer connection
 	_, peerConnection, err := setupWebRTCConnection(detached)
 	if err != nil {
-		fmt.Printf("failed to create peer connection: %v\n", err)
+		fmt.Printf("HandleClientConnection failed to create peer connection: %v\n", err)
 		return
 	}
 
@@ -295,7 +295,7 @@ func HandleClientConnection(conn net.Conn, signalServer string, targetName strin
 					return
 				}
 			} else {
-				err = c.SendRaw(buffer[:n])
+				err = c.SendRawDataChannel(buffer[:n])
 				if err != nil {
 					fmt.Printf("Error sending raw data: %v\n", err)
 					done <- struct{}{}
@@ -330,15 +330,14 @@ func getHttpClient() *http.Client {
 	}
 }
 
-func DialClientConnection(signalServer string, targetName string, bearerToken string) (*Connection, error) {
+func DialClientConnection(signalServer string, targetName string, bearerToken string, detached bool) (*Connection, error) {
 	// Create a SettingEngine and enable Detach
-	detached := true
 	errstr := ""
 
 	// create a new WebRTC peer connection
 	_, peerConnection, err := setupWebRTCConnection(detached)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create peer connection: %v", err)
+		return nil, fmt.Errorf("DialClientConnection failed to create peer connection: %v", err)
 	}
 
 	dataChannel, err := peerConnection.CreateDataChannel("data", dataChannelConfig)

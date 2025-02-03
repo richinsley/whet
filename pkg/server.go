@@ -82,6 +82,27 @@ func (ws *WhetServer) configureSignalServer() error {
 		http.Error(w, "404 page not found", http.StatusNotFound)
 	})
 
+	// API handlers
+
+	// Simple API endpoint to return server health or a "ping"
+	ws.Mux.HandleFunc("/api/health", ws.healthHandler)
+
+	// // Set up file servers for each folder in serveFolders
+	// for _, folderSpec := range ws.ServeFolders {
+	// 	parts := strings.Split(folderSpec, "=")
+	// 	if len(parts) != 2 {
+	// 		log.Printf("Invalid folder specification: %s (expected format: subdomain=/path)", folderSpec)
+	// 		continue
+	// 	}
+
+	// 	subdomain := strings.Trim(parts[0], "/")
+	// 	path := parts[1]
+
+	// 	fs := http.FileServer(http.Dir(path))
+	// 	pattern := fmt.Sprintf("/%s/", subdomain)
+	// 	ws.Mux.Handle(pattern, http.StripPrefix(pattern, fs))
+	// }
+
 	// Set up file servers for each folder in serveFolders
 	for _, folderSpec := range ws.ServeFolders {
 		parts := strings.Split(folderSpec, "=")
@@ -94,8 +115,14 @@ func (ws *WhetServer) configureSignalServer() error {
 		path := parts[1]
 
 		fs := http.FileServer(http.Dir(path))
+		wrappedFs := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Add Service-Worker-Allowed header
+			w.Header().Set("Service-Worker-Allowed", "/whet/")
+			fs.ServeHTTP(w, r)
+		})
+
 		pattern := fmt.Sprintf("/%s/", subdomain)
-		ws.Mux.Handle(pattern, http.StripPrefix(pattern, fs))
+		ws.Mux.Handle(pattern, http.StripPrefix(pattern, wrappedFs))
 	}
 
 	return nil
@@ -346,7 +373,7 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 							}
 
 							// write all the data to the TCP connection
-							err = c.SendData(buffer[:n])
+							err = c.SendDataTCP(buffer[:n])
 							if err != nil {
 								fmt.Printf("Error writing to target connection: %v\n", err)
 								break
@@ -477,6 +504,8 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 				if !c.closed {
 					c.conn.Close()
 					c.closed = true
+				} else {
+					fmt.Println("Connection already closed")
 				}
 			}
 		}
@@ -484,7 +513,7 @@ func (ws *WhetServer) WhetHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	} else {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed you doink!", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -504,6 +533,8 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 		}
 
 		if err != nil {
+			// explitly write 0 bytes to the data channel to signal the end of the stream
+			c.SendRawDataChannel([]byte{})
 			if err != io.EOF {
 				fmt.Printf("Error reading from target connection: %v\n", err)
 			} else {
@@ -520,7 +551,7 @@ func createServerSideConnection(peer *webrtc.PeerConnection, dataChannel *webrtc
 
 		// push the data to the data channel
 		if c.rawDetached != nil {
-			err = c.SendRaw(buffer[:n])
+			err = c.SendRawDataChannel(buffer[:n])
 		} else {
 			err = dataChannel.Send(buffer[:n])
 		}
